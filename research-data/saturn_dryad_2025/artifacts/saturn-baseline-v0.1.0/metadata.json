@@ -1,0 +1,264 @@
+{
+  "version": "saturn-baseline-v0.1.0",
+  "dataset": {
+    "doi": "10.5061/dryad.j9kd51cq4",
+    "dryad_version": 3,
+    "file": "_SATURN_2025-04APR_06restructure_DEIDENTIFIED.csv",
+    "sha256": "18f3c5523a8e22e10e4b7dec9d458142665f716b1ada1f4d7cea9babfc745168"
+  },
+  "target": "AUTO_DEMENTIA_INITIAL_VISIT_1yes_0no",
+  "feature_count": 44,
+  "label_mapping": {
+    "0": "no automated dementia ICD code at initial visit",
+    "1": "automated dementia ICD code at initial visit"
+  },
+  "features": [
+    "SATURN_SCORE_SIMPLE_ATTENTION_J",
+    "SATURN_SCORE_SIMPLE_ATTENTION_FRUIT",
+    "SATURN_SCORE_SIMPLE_ATTENTION_1239",
+    "SATURN_SCORE_SPATIAL_1",
+    "SATURN_SCORE_SPATIAL_2",
+    "SATURN_SCORE_SPATIAL_3",
+    "SATURN_SCORE_SPATIAL_4",
+    "SATURN_SCORE_ORIENTATION_MONTH",
+    "SATURN_SCORE_ORIENTATION_YEAR",
+    "SATURN_SCORE_ORIENTATION_DAY_OF_WEEK",
+    "SATURN_SCORE_ORIENTATION_STATE",
+    "SATURN_SCORE_INCIDENTAL_MEMORY_PHRASE",
+    "SATURN_SCORE_INCIDENTAL_MEMORY_J",
+    "SATURN_SCORE_INCIDENTAL_MEMORY_NUMBER",
+    "SATURN_SCORE_RECALL_FIVEWORDS",
+    "SATURN_SCORE_MATH_ADD",
+    "SATURN_SCORE_MATH_SUBTRACT",
+    "SATURN_SCORE_STROOP_POINTS",
+    "SATURN_SCORE_MINI_TRAILS_A",
+    "SATURN_SCORE_MINI_TRAILS_B",
+    "SATURN_TIME_STROOP_ERRORS",
+    "SATURN_TIME_SIMPLE_ATTENTION_J_ms",
+    "SATURN_TIME_SIMPLE_ATTENTION_FRUIT_ms",
+    "SATURN_TIME_SIMPLE_ATTENTION_1239_ms",
+    "SATURN_TIME_SPATIAL_1_ms",
+    "SATURN_TIME_SPATIAL_2_ms",
+    "SATURN_TIME_SPATIAL_3_ms",
+    "SATURN_TIME_SPATIAL_4_ms",
+    "SATURN_TIME_ORIENTATION_MONTH_ms",
+    "SATURN_TIME_ORIENTATION_YEAR_ms",
+    "SATURN_TIME_ORIENTATION_DAY_OF_WEEK_ms",
+    "SATURN_TIME_ORIENTATION_STATE_ms",
+    "SATURN_TIME_INCIDENTAL_MEMORY_PHRASE_ms",
+    "SATURN_TIME_INCIDENTAL_MEMORY_J_ms",
+    "SATURN_TIME_INCIDENTAL_MEMORY_NUMBER_ms",
+    "SATURN_TIME_RECALL_FIVEWORDS_ms",
+    "SATURN_TIME_MATH_ADD_ms",
+    "SATURN_TIME_MATH_SUBTRACT_ms",
+    "SATURN_TIME_STROOP_MEAN_ms",
+    "SATURN_TIME_MINI_TRAILS_A_ms",
+    "SATURN_TIME_MINI_TRAILS_B_ms",
+    "SATURN_READING_SPEED_median_words_per_s",
+    "SATURN_MOTOR_SPEED_ms_per_button",
+    "SATURN_TOTAL_TIME_min"
+  ],
+  "excluded_columns": [
+    "AUTO_DEMENTIA_INITIAL_VISIT_1yes_0no",
+    "AUTO_ALZHEIMERS_INITIAL_VISIT_1yes_0no",
+    "INDEX_EVENT",
+    "PATIENT",
+    "SATURN_TOTAL_SCORE",
+    "SATURN_POSSIBLE_SCORE"
+  ],
+  "subset": {
+    "selection": "INDEX_EVENT == SATURN, nonmissing SATURN_TOTAL_SCORE and target",
+    "rows": 144,
+    "subjects": 144
+  },
+  "split": {
+    "train": {
+      "rows": 86,
+      "subjects": 86,
+      "class_counts": {
+        "0": 58,
+        "1": 28
+      }
+    },
+    "validation": {
+      "rows": 29,
+      "subjects": 29,
+      "class_counts": {
+        "0": 17,
+        "1": 12
+      }
+    },
+    "test": {
+      "rows": 29,
+      "subjects": 29,
+      "class_counts": {
+        "0": 19,
+        "1": 10
+      }
+    }
+  },
+  "metrics": {
+    "logistic_regression": {
+      "validation": {
+        "rows": 29,
+        "class_counts": {
+          "0": 17,
+          "1": 12
+        },
+        "accuracy": 0.5862068965517241,
+        "sensitivity_recall_positive": 0.25,
+        "specificity_recall_negative": 0.8235294117647058,
+        "precision_positive": 0.5,
+        "f1_positive": 0.3333333333333333,
+        "roc_auc": 0.5784313725490197,
+        "confusion_matrix_labels_0_1": [
+          [
+            14,
+            3
+          ],
+          [
+            9,
+            3
+          ]
+        ],
+        "true_negative": 14,
+        "false_positive": 3,
+        "false_negative": 9,
+        "true_positive": 3
+      },
+      "test": {
+        "rows": 29,
+        "class_counts": {
+          "0": 19,
+          "1": 10
+        },
+        "accuracy": 0.7586206896551724,
+        "sensitivity_recall_positive": 0.7,
+        "specificity_recall_negative": 0.7894736842105263,
+        "precision_positive": 0.6363636363636364,
+        "f1_positive": 0.6666666666666666,
+        "roc_auc": 0.7736842105263156,
+        "confusion_matrix_labels_0_1": [
+          [
+            15,
+            4
+          ],
+          [
+            3,
+            7
+          ]
+        ],
+        "true_negative": 15,
+        "false_positive": 4,
+        "false_negative": 3,
+        "true_positive": 7,
+        "confidence_intervals_95_wilson_sampling_uncertainty": {
+          "accuracy": [
+            0.5789239838218867,
+            0.8778157755747991
+          ],
+          "sensitivity_recall_positive": [
+            0.39677814746114537,
+            0.8922087325936989
+          ],
+          "specificity_recall_negative": [
+            0.5666572155618583,
+            0.9149232336708375
+          ]
+        }
+      }
+    },
+    "random_forest": {
+      "validation": {
+        "rows": 29,
+        "class_counts": {
+          "0": 17,
+          "1": 12
+        },
+        "accuracy": 0.7241379310344828,
+        "sensitivity_recall_positive": 0.6666666666666666,
+        "specificity_recall_negative": 0.7647058823529411,
+        "precision_positive": 0.6666666666666666,
+        "f1_positive": 0.6666666666666666,
+        "roc_auc": 0.7254901960784315,
+        "confusion_matrix_labels_0_1": [
+          [
+            13,
+            4
+          ],
+          [
+            4,
+            8
+          ]
+        ],
+        "true_negative": 13,
+        "false_positive": 4,
+        "false_negative": 4,
+        "true_positive": 8
+      },
+      "test": {
+        "rows": 29,
+        "class_counts": {
+          "0": 19,
+          "1": 10
+        },
+        "accuracy": 0.7241379310344828,
+        "sensitivity_recall_positive": 0.7,
+        "specificity_recall_negative": 0.7368421052631579,
+        "precision_positive": 0.5833333333333334,
+        "f1_positive": 0.6363636363636364,
+        "roc_auc": 0.8473684210526315,
+        "confusion_matrix_labels_0_1": [
+          [
+            14,
+            5
+          ],
+          [
+            3,
+            7
+          ]
+        ],
+        "true_negative": 14,
+        "false_positive": 5,
+        "false_negative": 3,
+        "true_positive": 7,
+        "confidence_intervals_95_wilson_sampling_uncertainty": {
+          "accuracy": [
+            0.5428286758313405,
+            0.8530124489791204
+          ],
+          "sensitivity_recall_positive": [
+            0.39677814746114537,
+            0.8922087325936989
+          ],
+          "specificity_recall_negative": [
+            0.5120844910218489,
+            0.8819358765321748
+          ]
+        }
+      }
+    }
+  },
+  "limitations": [
+    "SATURN is not the MindScan task protocol.",
+    "The target is an automated ICD-code proxy from retrospective records, not an adjudicated diagnosis.",
+    "The dataset is from a single dementia clinic and has substantial missingness.",
+    "Scores are research outputs and are not calibrated clinical probabilities.",
+    "These artifacts must not be configured for the production API.",
+    "No voice features or multimodal fusion were used."
+  ],
+  "software": {
+    "python": "3.14",
+    "pandas": "3.0.6",
+    "scikit_learn": "1.9.1"
+  },
+  "provenance": {
+    "training_script_sha256": "c33c44508d18a5d564db9a97dc5c023a38ecb3c9f53a1f070871575d89ce4857",
+    "feature_schema_sha256": "e90f9db25b0e5b0690c4c1b1dac28f8803e34a98e235a239e11a2b58573462ee",
+    "split_manifest_sha256": "f13e7afadf146a812a590fc32725951e801d865a9d7fbafdedb5bb98b7b42875",
+    "model_artifact_sha256": {
+      "logistic_regression": "246b9f7f168f6b7465f3c812111723c37c5cf526dc85b717c6859bffdfee0fc3",
+      "random_forest": "cdaacc84c330a0a49a84312a0efa8e7f12f605f185aa53195c67eba57f50cd67"
+    }
+  }
+}

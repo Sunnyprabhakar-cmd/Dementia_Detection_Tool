@@ -1,0 +1,12 @@
+# Downloaded source dataset and duplicate copies
+downloaded/
+*.csv
+*.xlsx
+*.zip
+
+# Locally trained research models
+artifacts/saturn-baseline-v0.1.0/*.joblib
+
+# Python generated files
+__pycache__/
+*.pyc

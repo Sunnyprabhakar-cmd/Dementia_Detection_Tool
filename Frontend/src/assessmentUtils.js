@@ -85,6 +85,14 @@ export const isRenderablePrediction = (prediction) => Boolean(
   && prediction.output.predicted_label.trim()
 );
 
+export const formatPredictionScores = (classScores = {}) =>
+  Object.entries(classScores)
+    .filter(([, score]) => typeof score === "number" && Number.isFinite(score))
+    .map(([label, score]) => ({
+      label,
+      score: score >= 0 && score <= 1 ? score * 100 : score
+    }));
+
 const safeObservationCounts = (values, allowedNames) => {
   if (!values || typeof values !== "object" || Array.isArray(values)) return null;
   return Object.fromEntries(

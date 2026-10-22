@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buildVoiceTaskPayload, formatLocalAssessmentDate, isRenderablePrediction } from "./assessmentUtils.js";
+import {
+  buildVoiceTaskPayload,
+  formatLocalAssessmentDate,
+  formatPredictionScores,
+  isRenderablePrediction
+} from "./assessmentUtils.js";
 import { API_BASE_URL } from "./api.js";
 import "./App.css";
 
@@ -1274,18 +1279,18 @@ function ResultSummary({ result, t }) {
 }
 
 function PredictionResult({ prediction, label }) {
-  const scores = prediction?.output?.class_scores || {};
+  const scores = formatPredictionScores(prediction?.output?.class_scores);
   return (
     <div className="prediction-card">
-      <p><strong>{label} output:</strong> {prediction.output?.predicted_label || "Available"}</p>
-      {Object.keys(scores).length > 0 && (
+      <p><strong>{label} class:</strong> {prediction.output.predicted_label}</p>
+      {scores.length > 0 && (
         <div className="prediction-scores">
-          {Object.entries(scores).map(([name, score]) => (
-            <span key={name}><strong>{name}</strong> {Number(score).toFixed(3)}</span>
+          {scores.map(({ label: scoreLabel, score }) => (
+            <span key={scoreLabel}><strong>{scoreLabel}</strong> {score.toFixed(1)}% model score</span>
           ))}
         </div>
       )}
-      <p className="muted-text">Research output only. Scores are uncalibrated and are not clinical probabilities.</p>
+      <p className="muted-text">Research output only. Model scores are not clinical probabilities.</p>
     </div>
   );
 }

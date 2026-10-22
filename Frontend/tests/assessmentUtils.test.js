@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildVoiceTaskPayload,
   formatLocalAssessmentDate,
+  formatPredictionScores,
   isRenderablePrediction,
   measureLanguageResponse,
   scoreMemoryResponses,
@@ -96,6 +97,19 @@ test("public report renders only a concrete successful prediction", () => {
     status: "available_research_only",
     output: { predicted_label: "" }
   }), false);
+});
+
+test("prediction scores preserve the model class mapping", () => {
+  assert.deepEqual(
+    formatPredictionScores({
+      Nondemented: 0.883848,
+      Demented: 0.116152
+    }),
+    [
+      { label: "Nondemented", score: 88.3848 },
+      { label: "Demented", score: 11.6152 }
+    ]
+  );
 });
 
 test("voice report payload keeps descriptive features but never retains transcript text", () => {
