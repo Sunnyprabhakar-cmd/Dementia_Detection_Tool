@@ -26,7 +26,9 @@ app.use(cors({
         if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
         return callback(new Error("Origin is not allowed by CORS."));
       }
-    : true
+    : process.env.NODE_ENV === "production"
+      ? false
+      : true
 }));
 
 app.get("/", (req, res) => {
@@ -70,13 +72,15 @@ const server = app.listen(PORT, () => {
   if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
     configurationErrors.push("JWT_SECRET is required in production.");
   }
-  if (process.env.NODE_ENV === "production" && !configuredOrigins.length) {
-    configurationErrors.push("CORS_ORIGIN is required in production.");
-  }
   if (configurationErrors.length) {
     console.error(`Startup configuration is invalid: ${configurationErrors.join(" ")}`);
     server.close(() => process.exit(1));
     return;
+  }
+  if (process.env.NODE_ENV === "production" && !configuredOrigins.length) {
+    console.warn(
+      "CORS_ORIGIN is not configured; production cross-origin browser requests are disabled."
+    );
   }
   console.log(`MindScan AI server is running on port ${PORT}`);
 });

@@ -10,6 +10,7 @@
     "start": "node server.js",
     "test": "node --test tests/*.test.js",
     "migrate": "node scripts/migrate.js",
+    "database:test": "node scripts/test-database-connection.js",
     "database:ensure": "node scripts/ensure-database.js",
     "dev": "nodemon server.js"
   },

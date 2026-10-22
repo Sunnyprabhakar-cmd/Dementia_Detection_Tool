@@ -13,7 +13,8 @@ pool.on("error", (error) => {
 
 export const checkDatabaseConnection = async () => {
   const result = await pool.query(`
-    SELECT current_database() AS database,
+    SELECT 1 AS ok,
+           current_database() AS database,
            current_user AS username,
            NOW() AS server_time
   `);
