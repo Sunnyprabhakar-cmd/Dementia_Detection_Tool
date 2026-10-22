@@ -20,12 +20,11 @@ The server binds to Render's supplied `PORT`; no fixed production port is requir
 | `NODE_ENV` | Yes | `production` |
 | `DATABASE_URL` | Yes | The newly rotated Neon connection string for the `neondb` database; copy it from Neon, never commit it |
 | `JWT_SECRET` | Yes | A newly generated long random application secret |
-| `CORS_ORIGIN` | For browser frontend access | The exact deployed frontend origin, including scheme and port when applicable, for example `https://frontend.example.com` |
+| `CORS_ORIGIN` | Yes for this deployed frontend | `https://dementia-detection-tool.vercel.app` exactly |
 | `PORT` | No | Supplied by Render automatically; do not set a fixed value |
 
-`CORS_ORIGIN` accepts a comma-separated list with no spaces required, such as
-`https://frontend.example.com,http://localhost:5173`. In production, an omitted
-value does not crash the server, but browser cross-origin requests are denied.
+`CORS_ORIGIN` accepts a comma-separated list with no spaces required in
+development, but production startup requires the exact deployed value above.
 When it is present, only exact listed origins are allowed. The backend does not
 enable credentialed wildcard CORS.
 

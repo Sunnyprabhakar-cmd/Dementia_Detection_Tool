@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
+import { fileURLToPath } from "node:url";
 
 import authRoutes from "./routes/authRoutes.js";
 import screeningRoutes from "./routes/screeningRoutes.js";
@@ -12,15 +13,14 @@ import { checkDatabaseConnection } from "./config/db.js";
 import { getDatabaseConfigurationError } from "./config/databaseConfig.js";
 
 const PORT = Number(process.env.PORT) || 3001;
-const app = express();
+export const PRODUCTION_FRONTEND_ORIGIN = "https://dementia-detection-tool.vercel.app";
 
 const configuredOrigins = String(process.env.CORS_ORIGIN || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-app.use(express.json({ limit: "1mb" }));
-app.use(cors({
+export const corsOptions = {
   origin: configuredOrigins.length
     ? (origin, callback) => {
         if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
@@ -28,8 +28,17 @@ app.use(cors({
       }
     : process.env.NODE_ENV === "production"
       ? false
-      : true
-}));
+      : true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204
+};
+
+export const app = express();
+
+app.use(express.json({ limit: "1mb" }));
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 app.get("/", (req, res) => {
   res.json({
@@ -63,7 +72,7 @@ app.use("/api/ml", mlRoutes);
 app.use("/api/audio", audioRoutes);
 app.use("/api/results", resultRoutes);
 
-const server = app.listen(PORT, () => {
+export const validateStartupConfiguration = () => {
   const configurationErrors = [];
   const databaseConfigurationError = getDatabaseConfigurationError();
   if (databaseConfigurationError) {
@@ -72,24 +81,40 @@ const server = app.listen(PORT, () => {
   if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
     configurationErrors.push("JWT_SECRET is required in production.");
   }
-  if (configurationErrors.length) {
-    console.error(`Startup configuration is invalid: ${configurationErrors.join(" ")}`);
-    server.close(() => process.exit(1));
-    return;
-  }
-  if (process.env.NODE_ENV === "production" && !configuredOrigins.length) {
-    console.warn(
-      "CORS_ORIGIN is not configured; production cross-origin browser requests are disabled."
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.CORS_ORIGIN !== PRODUCTION_FRONTEND_ORIGIN
+  ) {
+    configurationErrors.push(
+      `CORS_ORIGIN must equal ${PRODUCTION_FRONTEND_ORIGIN} in production.`
     );
   }
-  console.log(`MindScan AI server is running on port ${PORT}`);
-});
+  return configurationErrors;
+};
 
-server.on("error", (error) => {
-  if (error.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use. Stop the process using that specific port or set PORT to another value.`);
-  } else {
-    console.error(`MindScan AI server failed to start: ${error.message}`);
-  }
-  process.exitCode = 1;
-});
+export const startServer = () => {
+  const server = app.listen(PORT, () => {
+    const configurationErrors = validateStartupConfiguration();
+    if (configurationErrors.length) {
+      console.error(`Startup configuration is invalid: ${configurationErrors.join(" ")}`);
+      server.close(() => process.exit(1));
+      return;
+    }
+    console.log(`MindScan AI server is running on port ${PORT}`);
+  });
+
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${PORT} is already in use. Stop the process using that specific port or set PORT to another value.`);
+    } else {
+      console.error(`MindScan AI server failed to start: ${error.message}`);
+    }
+    process.exitCode = 1;
+  });
+
+  return server;
+};
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  startServer();
+}
