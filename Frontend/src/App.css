@@ -246,6 +246,28 @@
   background: linear-gradient(135deg, rgba(14, 116, 144, 0.14), rgba(30, 41, 59, 0.72));
 }
 
+.simulated-probability-card {
+  display: grid;
+  gap: 10px;
+  padding: 20px;
+  border: 2px solid rgba(251, 191, 36, 0.75);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(120, 80, 8, 0.42), rgba(30, 41, 59, 0.82));
+  box-shadow: 0 8px 24px rgba(120, 80, 8, 0.18);
+}
+
+.simulated-probability-card h3 {
+  margin: 0;
+  color: #fff2c2;
+}
+
+.simulated-probability-value {
+  margin: 0;
+  color: white;
+  font-size: 2rem;
+  font-weight: 800;
+}
+
 .prediction-status {
   border-color: rgba(148, 163, 184, 0.2);
 }

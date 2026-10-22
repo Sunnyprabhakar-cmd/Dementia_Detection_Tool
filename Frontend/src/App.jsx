@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   buildVoiceTaskPayload,
+  calculateSimulatedDementiaProbability,
   formatLocalAssessmentDate,
   formatPredictionScores,
   isRenderablePrediction
@@ -1194,6 +1195,7 @@ function ResultSummary({ result, t }) {
   const isSimulatedDemo = result?.demo === true && result?.simulated === true;
   const modelOutput = result?.modelOutput;
   const cognitiveTaskScore = result?.cognitiveTaskScore || result?.descriptiveTaskSummary;
+  const simulatedProbability = calculateSimulatedDementiaProbability(cognitiveTaskScore?.index_percent);
   const voiceAnalysisSummary = result?.voiceAnalysisSummary;
   const cognitivePrediction = result?.cognitivePrediction || modelOutput;
   const voicePrediction = result?.voicePrediction;
@@ -1232,6 +1234,21 @@ function ResultSummary({ result, t }) {
           <p>{cognitiveTaskScore.limitation}</p>
         </section>
       )}
+      <section className="simulated-probability-card" aria-label="Simulated dementia probability">
+        <h3>Simulated Dementia Probability (Demo Only)</h3>
+        <p className="simulated-probability-value">
+          {simulatedProbability == null ? "Not available" : `${simulatedProbability.toFixed(2)}%`}
+        </p>
+        <p>
+          Illustrative score-to-percentage mapping for an educational demonstration.
+          Not a clinically validated probability or diagnosis.
+        </p>
+        {cognitiveTaskScore?.index_percent != null && (
+          <p className="muted-text">
+            Based only on cognitive task-performance score: {cognitiveTaskScore.index_percent}/100.
+          </p>
+        )}
+      </section>
       <div className="metric-grid">
         {Object.entries(taskNames).map(([key, title]) => (
           <div key={key} className="report-item"><span>{title}</span><strong>{taskResults[key]?.status || "not assessed"}</strong></div>

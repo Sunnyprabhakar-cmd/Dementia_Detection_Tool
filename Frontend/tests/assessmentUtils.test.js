@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildVoiceTaskPayload,
+  calculateSimulatedDementiaProbability,
   formatLocalAssessmentDate,
   formatPredictionScores,
   isRenderablePrediction,
@@ -110,6 +111,14 @@ test("prediction scores preserve the model class mapping", () => {
       { label: "Demented", score: 11.6152 }
     ]
   );
+});
+
+test("simulated dementia probability maps only the cognitive score and clamps bounds", () => {
+  assert.equal(calculateSimulatedDementiaProbability(16.65), 83.35);
+  assert.equal(calculateSimulatedDementiaProbability(-5), 100);
+  assert.equal(calculateSimulatedDementiaProbability(120), 0);
+  assert.equal(calculateSimulatedDementiaProbability(null), null);
+  assert.equal(calculateSimulatedDementiaProbability(Number.NaN), null);
 });
 
 test("voice report payload keeps descriptive features but never retains transcript text", () => {

@@ -93,6 +93,15 @@ export const formatPredictionScores = (classScores = {}) =>
       score: score >= 0 && score <= 1 ? score * 100 : score
     }));
 
+export const calculateSimulatedDementiaProbability = (cognitiveTaskPerformanceScore) => {
+  if (typeof cognitiveTaskPerformanceScore !== "number"
+    || !Number.isFinite(cognitiveTaskPerformanceScore)) {
+    return null;
+  }
+  const clampedScore = Math.min(100, Math.max(0, cognitiveTaskPerformanceScore));
+  return Number((100 - clampedScore).toFixed(2));
+};
+
 const safeObservationCounts = (values, allowedNames) => {
   if (!values || typeof values !== "object" || Array.isArray(values)) return null;
   return Object.fromEntries(
