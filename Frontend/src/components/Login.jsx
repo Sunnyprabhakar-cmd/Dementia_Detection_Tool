@@ -1,7 +1,7 @@
 import { useState } from "react";
+import { API_BASE_URL } from "../api.js";
 
 function Login() {
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
 

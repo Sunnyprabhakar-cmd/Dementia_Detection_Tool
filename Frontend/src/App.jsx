@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildVoiceTaskPayload, formatLocalAssessmentDate } from "./assessmentUtils.js";
+import { API_BASE_URL } from "./api.js";
 import "./App.css";
 
 const languagePack = {
@@ -178,7 +179,6 @@ function App() {
   const [demoReport, setDemoReport] = useState(null);
 
   const t = languagePack[language] || languagePack.en;
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
   const demoModeEnabled = import.meta.env.VITE_MINDSCAN_DEMO_MODE === "true";
 
   useEffect(() => {
@@ -205,7 +205,7 @@ function App() {
     } catch (error) {
       console.warn("History unavailable", error);
     }
-  }, [API_BASE_URL, token]);
+  }, [token]);
 
   useEffect(() => {
     if (!token) return undefined;
@@ -890,7 +890,6 @@ function OrientationTask({ t, value, setValue, onNext }) {
 
 
 function VoiceTask({ token, onVoiceResult, onFinish }) {
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
   const [countdown, setCountdown] = useState(20);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);

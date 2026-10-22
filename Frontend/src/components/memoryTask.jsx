@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { API_BASE_URL } from "../api.js";
 
 const WORDS = [
     "APPLE",
@@ -9,7 +10,6 @@ const WORDS = [
 ];
 
 function MemoryTask({ screeningId, token }) {
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
     const [timeLeft, setTimeLeft] = useState(10);
     const [showWords, setShowWords] = useState(true);
     const [answers, setAnswers] = useState(["", "", "", "", ""]);

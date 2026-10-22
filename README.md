@@ -108,7 +108,7 @@ npm --prefix Backend run dev
 In another terminal, start Vite with its matching UI flag:
 
 ```powershell
-$env:VITE_API_BASE_URL = "http://localhost:3002"
+$env:VITE_API_URL = "http://localhost:3002"
 $env:VITE_MINDSCAN_DEMO_MODE = "true"
 npm --prefix Frontend run dev
 ```

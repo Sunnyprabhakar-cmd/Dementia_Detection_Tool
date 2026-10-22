@@ -58,8 +58,8 @@ values. Do not paste the URL or password into source control or terminal logs.
 | `MINDSCAN_AUDIO_MODEL_PYTHON` | Optional Python executable used by the voice classifier |
 | `MINDSCAN_DEMO_MODE` | Development-only demo opt-in; leave unset or `false` in production |
 
-The frontend separately reads `VITE_API_BASE_URL` and must be built with the
-Render backend URL, `https://dementia-detection-tool.onrender.com`. It also
+The frontend separately reads `VITE_API_URL`, which must be set in Vercel to
+the Render backend URL, `https://dementia-detection-tool.onrender.com`. It also
 reads `VITE_MINDSCAN_DEMO_MODE`, which should remain unset/false for production.
 
 ## Neon schema setup
