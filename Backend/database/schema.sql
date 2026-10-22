@@ -29,6 +29,25 @@ CREATE TABLE screening_sessions (
         ON DELETE CASCADE
 );
 
+-- Required by patient intake and assessment report queries.
+CREATE TABLE IF NOT EXISTS screening_patient_profiles (
+    screening_id INTEGER PRIMARY KEY REFERENCES screening_sessions(id) ON DELETE CASCADE,
+    patient_identifier VARCHAR(80),
+    age INTEGER NOT NULL CHECK (age BETWEEN 1 AND 120),
+    sex VARCHAR(32),
+    education_years INTEGER,
+    handedness VARCHAR(32),
+    socioeconomic_status VARCHAR(80),
+    medical_history TEXT,
+    medications TEXT,
+    reported_symptoms TEXT,
+    symptom_onset TEXT,
+    functional_changes TEXT,
+    family_history TEXT,
+    consent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 
 -- =========================================
 -- TASK RESPONSES

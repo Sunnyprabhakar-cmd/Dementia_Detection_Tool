@@ -41,6 +41,40 @@ npm run dev
 
 Open `http://127.0.0.1:5173/`. The PostgreSQL-backed API health endpoint is `http://127.0.0.1:3001/api/health`; it returns HTTP 503 if the API cannot reach the database. Development settings are local-only and are not a production security configuration.
 
+## Render + Neon deployment
+
+The backend uses `DATABASE_URL` when it is present. For Render, set it to the newly rotated Neon connection string from the Neon dashboard; do not commit it or paste it into source control. The connection is configured with TLS and certificate verification enabled. Do not set `DATABASE_SSL_REJECT_UNAUTHORIZED=false` in production.
+
+Render settings:
+
+```text
+Root directory: Backend
+Build command: npm install
+Start command: npm start
+Health check path: /api/health
+```
+
+Required Render environment variables:
+
+```text
+NODE_ENV=production
+PORT=<Render supplies this automatically; do not hardcode it>
+DATABASE_URL=<rotated Neon PostgreSQL connection string>
+JWT_SECRET=<long random production secret>
+CORS_ORIGIN=<deployed frontend origin>
+```
+
+Optional variables are documented in `Backend/.env.example`: `DATABASE_SSL_REJECT_UNAUTHORIZED`, `PYTHON_EXECUTABLE`, `MINDSCAN_MODEL_*`, `MINDSCAN_AUDIO_MODEL_*`, and `MINDSCAN_DEMO_MODE`. The demo mode is disabled unless explicitly enabled in development. Python/audio processing requires a compatible runtime and cached Whisper model; Render's ephemeral filesystem is not suitable for retaining uploaded recordings. Uploads are processed temporarily and removed.
+
+Apply the schema to an empty Neon database as an explicit operation:
+
+```powershell
+$env:DATABASE_URL = "<rotated Neon connection string>"
+npm --prefix Backend run migrate
+```
+
+`migrate` uses repeatable, checksum-checked migrations and never drops or truncates application tables. Do not run `database:ensure` against Neon: it is a local-development helper that can create a named local database when individual `DB_*` variables are used. With `DATABASE_URL`, it performs only a connection check.
+
 Optional Python packages are pinned in `Backend/ml/requirements-training.txt` and `Backend/ml/requirements-audio.txt`. Setup checks/installs the training environment and verifies the existing `.venv-audio` where available. To create the audio environment when absent:
 
 ```powershell
