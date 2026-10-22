@@ -20,12 +20,13 @@ The server binds to Render's supplied `PORT`; no fixed production port is requir
 | `NODE_ENV` | Yes | `production` |
 | `DATABASE_URL` | Yes | The newly rotated Neon connection string for the `neondb` database; copy it from Neon, never commit it |
 | `JWT_SECRET` | Yes | A newly generated long random application secret |
-| `CORS_ORIGIN` | Yes for this deployed frontend | `https://dementia-detection-tool.vercel.app` exactly |
+| `CORS_ORIGIN` | Recommended | `https://dementia-detection-tool.vercel.app` exactly; if omitted, the backend uses this same exact built-in production origin |
 | `PORT` | No | Supplied by Render automatically; do not set a fixed value |
 
 `CORS_ORIGIN` accepts a comma-separated list with no spaces required in
-development, but production startup requires the exact deployed value above.
-When it is present, only exact listed origins are allowed. The backend does not
+development. In production, an explicitly provided value must equal the
+deployed origin above; if it is omitted, the backend uses that same exact
+built-in origin. Only exact listed origins are allowed. The backend does not
 enable credentialed wildcard CORS.
 
 `DATABASE_URL` takes precedence over every `DB_*` variable. The application

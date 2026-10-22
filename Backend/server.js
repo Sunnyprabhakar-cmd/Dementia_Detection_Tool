@@ -19,16 +19,17 @@ const configuredOrigins = String(process.env.CORS_ORIGIN || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+const productionOrigins = configuredOrigins.length
+  ? configuredOrigins
+  : [PRODUCTION_FRONTEND_ORIGIN];
 
 export const corsOptions = {
-  origin: configuredOrigins.length
+  origin: configuredOrigins.length || process.env.NODE_ENV === "production"
     ? (origin, callback) => {
-        if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
+        if (!origin || productionOrigins.includes(origin)) return callback(null, true);
         return callback(new Error("Origin is not allowed by CORS."));
       }
-    : process.env.NODE_ENV === "production"
-      ? false
-      : true,
+    : true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   optionsSuccessStatus: 204
@@ -83,6 +84,7 @@ export const validateStartupConfiguration = () => {
   }
   if (
     process.env.NODE_ENV === "production" &&
+    process.env.CORS_ORIGIN &&
     process.env.CORS_ORIGIN !== PRODUCTION_FRONTEND_ORIGIN
   ) {
     configurationErrors.push(
@@ -99,6 +101,11 @@ export const startServer = () => {
       console.error(`Startup configuration is invalid: ${configurationErrors.join(" ")}`);
       server.close(() => process.exit(1));
       return;
+    }
+    if (process.env.NODE_ENV === "production" && !process.env.CORS_ORIGIN) {
+      console.warn(
+        `CORS_ORIGIN is not set; using the built-in exact production origin ${PRODUCTION_FRONTEND_ORIGIN}.`
+      );
     }
     console.log(`MindScan AI server is running on port ${PORT}`);
   });
