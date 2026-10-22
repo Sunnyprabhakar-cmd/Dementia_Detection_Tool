@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildVoiceTaskPayload,
   formatLocalAssessmentDate,
+  isRenderablePrediction,
   measureLanguageResponse,
   scoreMemoryResponses,
   summarizeAttentionTrials,
@@ -76,6 +77,25 @@ test("model helper never promotes fabricated or absent output to available", () 
     "unavailable"
   );
   assert.equal(summarizeModelOutput(null).status, "unavailable");
+});
+
+test("public report renders only a concrete successful prediction", () => {
+  assert.equal(isRenderablePrediction({
+    status: "available_research_only",
+    output: { predicted_label: "Nondemented" }
+  }), true);
+  assert.equal(isRenderablePrediction({
+    status: "available_research_only",
+    output: null
+  }), false);
+  assert.equal(isRenderablePrediction({
+    status: "unavailable",
+    output: { predicted_label: "Demented" }
+  }), false);
+  assert.equal(isRenderablePrediction({
+    status: "available_research_only",
+    output: { predicted_label: "" }
+  }), false);
 });
 
 test("voice report payload keeps descriptive features but never retains transcript text", () => {

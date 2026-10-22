@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buildVoiceTaskPayload, formatLocalAssessmentDate } from "./assessmentUtils.js";
+import { buildVoiceTaskPayload, formatLocalAssessmentDate, isRenderablePrediction } from "./assessmentUtils.js";
 import { API_BASE_URL } from "./api.js";
 import "./App.css";
+
+const hasMeasuredValue = (value) => {
+  if (value == null) return false;
+  if (typeof value !== "object") return true;
+  return Object.values(value).some(hasMeasuredValue);
+};
 
 const languagePack = {
   en: {
@@ -1186,6 +1192,13 @@ function ResultSummary({ result, t }) {
   const voiceAnalysisSummary = result?.voiceAnalysisSummary;
   const cognitivePrediction = result?.cognitivePrediction || modelOutput;
   const voicePrediction = result?.voicePrediction;
+  const voiceFeatures = taskResults.voice?.measurements?.speech_features;
+  const transcriptAnalysis = taskResults.voice?.measurements?.transcript_analysis;
+  const hasVoiceObservations = Boolean(
+    voiceAnalysisSummary?.score_percent != null
+    || hasMeasuredValue(transcriptAnalysis?.observations)
+    || hasMeasuredValue(voiceFeatures?.features)
+  );
   const taskNames = { memory: "Memory recall", attention: "Attention task", orientation: "Orientation", language: "Language fluency" };
 
   return (
@@ -1219,60 +1232,42 @@ function ResultSummary({ result, t }) {
           <div key={key} className="report-item"><span>{title}</span><strong>{taskResults[key]?.status || "not assessed"}</strong></div>
         ))}
       </div>
-      <section className="report-section">
+      {hasVoiceObservations && <section className="report-section">
         <h3>Voice Analysis</h3>
-        {voiceAnalysisSummary && (
+        {voiceAnalysisSummary?.score_percent != null && (
           <>
             <p>
               <strong>Experimental speech-fluency indicator: </strong>
-              {voiceAnalysisSummary.score_percent == null
-                ? "Not measured"
-                : `${voiceAnalysisSummary.score_percent}/100`}
-              {" "}({voiceAnalysisSummary.status})
+              {`${voiceAnalysisSummary.score_percent}/100`}
             </p>
-            <p>Available components: {voiceAnalysisSummary.available_score_components?.join(", ") || "None"}</p>
             <p>{voiceAnalysisSummary.method}</p>
-            <p>Feature availability: {voiceAnalysisSummary.feature_coverage_percent == null ? "Not measured" : `${voiceAnalysisSummary.feature_coverage_percent}%`}</p>
-            {voiceAnalysisSummary.missing_fields?.length > 0 && (
-              <p>Not measured: {voiceAnalysisSummary.missing_fields.join(", ")}</p>
-            )}
             <p>{voiceAnalysisSummary.limitation}</p>
           </>
         )}
         {isSimulatedDemo && <p>Synthetic transcript fixture only - no audio recording or transcription was performed.</p>}
-        <p>Status: {taskResults.voice?.measurements?.status || taskResults.voice?.status || "not assessed"}</p>
         {taskResults.voice?.measurements?.language && <p>Language: {taskResults.voice.measurements.language}</p>}
         {taskResults.voice?.measurements?.duration != null && <p>Recorded duration: {Number(taskResults.voice.measurements.duration).toFixed(1)} seconds</p>}
-        <TranscriptObservationList analysis={taskResults.voice?.measurements?.transcript_analysis} />
+        <TranscriptObservationList analysis={transcriptAnalysis} />
         {!isSimulatedDemo && <p>Transcript text and raw audio are not retained in the report; descriptive counts and measured timing summaries are saved.</p>}
-        <SpeechTimingObservations speechFeatures={taskResults.voice?.measurements?.speech_features} />
-        <p>Experimental transcript and audio observations only. English-specific rules may be unreliable due to language, accent, education, fluency, background noise, and other conditions. Any voice model output below is kept separate from these measurements.</p>
-      </section>
+        <SpeechTimingObservations speechFeatures={voiceFeatures} />
+        <p>Experimental transcript and audio observations only. English-specific rules may be unreliable due to language, accent, education, fluency, background noise, and other conditions.</p>
+      </section>}
       <section className="report-section" aria-label="Overall assessment">
         <h3>Overall Assessment</h3>
         <p>Cognitive task-performance and voice results are shown separately. They are not combined into a dementia-risk percentage.</p>
         <p><strong>Cognitive:</strong> {cognitiveTaskScore?.index_percent == null ? "Not measured" : `${cognitiveTaskScore.index_percent}/100`}</p>
-        <p><strong>Voice experimental indicator:</strong> {voiceAnalysisSummary?.score_percent == null ? "Not measured" : `${voiceAnalysisSummary.score_percent}/100`}</p>
+        {voiceAnalysisSummary?.score_percent != null && (
+          <p><strong>Voice experimental indicator:</strong> {`${voiceAnalysisSummary.score_percent}/100`}</p>
+        )}
       </section>
-      <section className="report-section">
+      {isRenderablePrediction(cognitivePrediction) && <section className="report-section">
         <h3>Cognitive prediction</h3>
-        {isSimulatedDemo
-          ? <p>Simulated software fixture only; no trained model ran.</p>
-          : cognitivePrediction?.status === "available_research_only"
-            ? <PredictionResult prediction={cognitivePrediction} label="Cognitive model" />
-            : <PredictionStatus prediction={cognitivePrediction} modality="cognitive" />}
-      </section>
-      <section className="report-section">
+        <PredictionResult prediction={cognitivePrediction} label="Cognitive model" />
+      </section>}
+      {isRenderablePrediction(voicePrediction) && <section className="report-section">
         <h3>Voice prediction</h3>
-        {voicePrediction?.status === "available_research_only"
-          ? <PredictionResult prediction={voicePrediction} label="Voice model" />
-          : <PredictionStatus prediction={voicePrediction} modality="voice" />}
-      </section>
-      <details className="research-details">
-        <summary>Research details and model diagnostics</summary>
-        <p>Predictions require a versioned, authorized model bundle whose feature schema matches this assessment. Task scores and speech observations are never substituted for model output.</p>
-        <pre>{JSON.stringify({ cognitive: cognitivePrediction, voice: voicePrediction }, null, 2)}</pre>
-      </details>
+        <PredictionResult prediction={voicePrediction} label="Voice model" />
+      </section>}
       {flags.length > 0 && <section className="report-section"><h3>Assessment notes</h3><ul className="flag-list">{flags.map((flag, index) => <li key={index}>{flag}</li>)}</ul></section>}
     </div>
   );
@@ -1283,7 +1278,6 @@ function PredictionResult({ prediction, label }) {
   return (
     <div className="prediction-card">
       <p><strong>{label} output:</strong> {prediction.output?.predicted_label || "Available"}</p>
-      <p>Version: {prediction.model_version || "Not reported"} · Evaluation: {prediction.evaluation_status || "Not reported"}</p>
       {Object.keys(scores).length > 0 && (
         <div className="prediction-scores">
           {Object.entries(scores).map(([name, score]) => (
@@ -1296,24 +1290,10 @@ function PredictionResult({ prediction, label }) {
   );
 }
 
-function PredictionStatus({ prediction, modality }) {
-  const label = modality === "voice" ? "voice" : "cognitive";
-  return (
-    <div className="prediction-status">
-      <p><strong>{label === "voice" ? "Voice model not enabled" : "Cognitive model not enabled"}</strong></p>
-      <p>{prediction?.reason || `No compatible ${label} research model is configured.`}</p>
-      <p className="muted-text">Measured {label === "voice" ? "speech observations" : "task-performance results"} remain available above.</p>
-    </div>
-  );
-}
-
 function TranscriptObservationList({ analysis }) {
   const observations = analysis?.observations;
   if (!observations) {
-    return <section className="report-section" aria-label="Transcript observations">
-      <h3>Experimental rule-based speech observations — not a diagnosis</h3>
-      <p>Not measured because a successful transcript analysis was unavailable.</p>
-    </section>;
+    return null;
   }
   const display = (value) => value == null ? "Not measured" : value;
   const formatCounts = (counts) => counts == null
@@ -1344,6 +1324,7 @@ function TranscriptObservationList({ analysis }) {
 
 function SpeechTimingObservations({ speechFeatures }) {
   const features = speechFeatures?.features || {};
+  if (!Object.values(features).some((value) => value != null)) return null;
   const display = (value) => value == null ? "Not measured" : value;
   return (
     <section className="report-section" aria-label="Speech timing observations">

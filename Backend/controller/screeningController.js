@@ -32,6 +32,7 @@ export const startScreening = async (req, res) => {
       screening
     });
   } catch (error) {
+    console.error("Failed to start screening:", error.code || error.message || "unknown error");
     return res.status(500).json({
       message: "Failed to start screening"
     });
@@ -156,6 +157,7 @@ export const getScreeningResult = async (req, res) => {
       }
     });
   } catch (error) {
+    console.error("Failed to complete screening:", error.code || error.message || "unknown error");
     return res.status(400).json({
       message: error.message
     });

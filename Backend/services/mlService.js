@@ -16,6 +16,13 @@ const defaultArtifactDirectory = path.join(
   "models",
   "research"
 );
+const legacyCognitiveArtifactDirectory = path.join(
+  projectRoot,
+  "artifacts",
+  "models",
+  "tabular",
+  "baseline_v1"
+);
 const localPython = path.join(projectRoot, ".venv", "Scripts", "python.exe");
 const allowedFeatures = allAssessmentFeatureNames;
 
@@ -33,6 +40,42 @@ const unavailable = (reason, modelVersion = null, missingInputs = [], modality =
     "Class scores are uncalibrated and must not be interpreted as probabilities."
   ]
 });
+
+const legacyCognitiveUnavailable = () => {
+  const metadataPath = path.join(legacyCognitiveArtifactDirectory, "metadata.json");
+  if (!fs.existsSync(metadataPath)) return null;
+
+  try {
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+    return {
+      ...unavailable(
+        "The recovered legacy cognitive model uses clinical/demographic and MRI features that this assessment does not collect. No task score was substituted.",
+        "baseline_v1",
+        [
+          "Visit",
+          "MR Delay",
+          "MMSE",
+          "CDR",
+          "eTIV",
+          "nWBV",
+          "ASF"
+        ],
+        "cognitive_tasks"
+      ),
+      model_name: "legacy_tabular_logistic_regression",
+      model_version: "baseline_v1",
+      evaluation_status: "historical_metadata_only",
+      model_details: {
+        artifact: "artifacts/models/tabular/baseline_v1",
+        feature_columns: metadata.feature_columns || [],
+        label_mapping: metadata.target || "Not recorded",
+        limitation: "This recovered model is not compatible with current task-derived predictors. MMSE and CDR are not collected or inferred."
+      }
+    };
+  } catch {
+    return null;
+  }
+};
 
 export const buildAssessmentFeatureRecord = (taskResults = {}) => {
   const memory = taskResults.memory?.measurements || {};
@@ -166,6 +209,10 @@ export const runPredictionModel = async (
     };
   }
   if (!modelVersion) {
+    if (modality === "cognitive_tasks") {
+      const legacyResult = legacyCognitiveUnavailable();
+      if (legacyResult) return legacyResult;
+    }
     return unavailable(
       modality === "speech"
         ? "No voice research model version is configured."

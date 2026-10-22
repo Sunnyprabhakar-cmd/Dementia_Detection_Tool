@@ -77,6 +77,14 @@ export const summarizeModelOutput = (modelOutput) => {
   };
 };
 
+export const isRenderablePrediction = (prediction) => Boolean(
+  prediction?.status === "available_research_only"
+  && prediction.output
+  && typeof prediction.output === "object"
+  && typeof prediction.output.predicted_label === "string"
+  && prediction.output.predicted_label.trim()
+);
+
 const safeObservationCounts = (values, allowedNames) => {
   if (!values || typeof values !== "object" || Array.isArray(values)) return null;
   return Object.fromEntries(
