@@ -1,32 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { buildVoiceTaskPayload, formatLocalAssessmentDate } from "./assessmentUtils.js";
 import "./App.css";
-
-const buildDemoMlRecord = (screeningResult = {}) => {
-  const overallScore = Number(screeningResult.overallScore || 0);
-  const riskScore = Number(screeningResult.riskScore || 0);
-  const mmseValue = Math.max(10, Math.min(30, Math.round((overallScore / 100) * 30)));
-  const cdrValue = riskScore >= 60 ? 1.0 : riskScore >= 35 ? 0.5 : 0.0;
-
-  return {
-    Visit: 1,
-    "MR Delay": 0,
-    "M/F": "M",
-    Hand: "R",
-    Age: 72,
-    EDUC: 12,
-    SES: 2,
-    MMSE: mmseValue,
-    CDR: cdrValue,
-    eTIV: 1678,
-    nWBV: 0.736,
-    ASF: 1.046,
-  };
-};
 
 const languagePack = {
   en: {
     appName: "MindScan AI",
-    subtitle: "Early dementia screening for clinical awareness",
+    subtitle: "Research-only cognitive and communication tasks; not a diagnosis",
     login: "Login",
     register: "Register",
     fullName: "Full name",
@@ -41,7 +20,7 @@ const languagePack = {
     attention: "Attention task",
     orientation: "Orientation",
     language: "Language fluency",
-    summary: "AI risk summary",
+    summary: "Assessment report",
     next: "Next",
     back: "Back",
     submit: "Submit",
@@ -140,11 +119,26 @@ const buildLanguageState = () => ({
 function App() {
   const [authMode, setAuthMode] = useState("login");
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("sunny@gmail.com");
-  const [password, setPassword] = useState("123456");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [language, setLanguage] = useState("en");
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [screeningId, setScreeningId] = useState(null);
+  const [patientInfo, setPatientInfo] = useState({
+    patientIdentifier: "",
+    age: "",
+    sex: "",
+    educationYears: "",
+    handedness: "unknown",
+    socioeconomicStatus: "",
+    medicalHistory: "",
+    medications: "",
+    reportedSymptoms: "",
+    symptomOnset: "",
+    functionalChanges: "",
+    familyHistory: "",
+    consent: false
+  });
   const [status, setStatus] = useState("");
   const [result, setResult] = useState(null);
   const [previousResults, setPreviousResults] = useState([]);
@@ -153,169 +147,45 @@ function App() {
   const [attentionData, setAttentionData] = useState({ correct: 0, wrong: 0, missed: 0, reactionTimes: [] });
   const [orientationData, setOrientationData] = useState({ year: "", month: "", date: "", place: "" });
   const [languageData, setLanguageData] = useState(() => buildLanguageState());
-  const [voiceState, setVoiceState] = useState({ isRecording: false, status: "", fileName: "" });
-  const [voiceAssessment, setVoiceAssessment] = useState({ score: 0, status: "Not started", duration: 0 });
-  const [voiceTimeLeft, setVoiceTimeLeft] = useState(20);
-  const mediaRecorderRef = useRef(null);
-  const audioStreamRef = useRef(null);
+  const [motorHand, setMotorHand] = useState("right");
+  const [clinicianData, setClinicianData] = useState(() => ({
+    observationDate: new Date().toISOString().slice(0, 10),
+    assessorRole: "",
+    side: "not_applicable",
+    observations: {
+      tremor: "not_assessed",
+      movementSlowness: "not_assessed",
+      reducedAmplitude: "not_assessed",
+      gaitBalance: "not_assessed",
+      posture: "not_assessed",
+      handPosture: "not_assessed",
+      sensoryResponse: "not_assessed",
+      reflexes: "not_assessed"
+    },
+    clinicalMeasurements: { mmse: "", cdr: "" },
+    notes: "",
+    skipped: false,
+    skipReason: ""
+  }));
+  const [voiceAssessment, setVoiceAssessment] = useState({
+    status: "not_assessed",
+    duration: null,
+    language: "",
+    speech_features: null,
+    transcript_analysis: null,
+    provenance: null
+  });
+  const [demoReport, setDemoReport] = useState(null);
 
   const t = languagePack[language] || languagePack.en;
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
-
-  const audioToWavBlob = async (blob) => {
-    const arrayBuffer = await blob.arrayBuffer();
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextCtor) {
-      return blob;
-    }
-
-    const audioContext = new AudioContextCtor();
-    const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-    const channelCount = decoded.numberOfChannels;
-    const sampleRate = decoded.sampleRate;
-    const frameCount = decoded.length;
-    const bytesPerSample = 2;
-    const blockAlign = channelCount * bytesPerSample;
-    const bufferLength = 44 + frameCount * blockAlign;
-    const wavBuffer = new ArrayBuffer(bufferLength);
-    const view = new DataView(wavBuffer);
-
-    const writeString = (offset, text) => {
-      for (let i = 0; i < text.length; i += 1) {
-        view.setUint8(offset + i, text.charCodeAt(i));
-      }
-    };
-
-    writeString(0, "RIFF");
-    view.setUint32(4, 36 + frameCount * blockAlign, true);
-    writeString(8, "WAVE");
-    writeString(12, "fmt ");
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, channelCount, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true);
-    writeString(36, "data");
-    view.setUint32(40, frameCount * blockAlign, true);
-
-    let offset = 44;
-    const channelData = [];
-    for (let ch = 0; ch < channelCount; ch += 1) {
-      channelData.push(decoded.getChannelData(ch));
-    }
-
-    for (let i = 0; i < frameCount; i += 1) {
-      for (let ch = 0; ch < channelCount; ch += 1) {
-        const sample = Math.max(-1, Math.min(1, channelData[ch][i]));
-        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-        offset += 2;
-      }
-    }
-
-    await audioContext.close();
-    return new Blob([wavBuffer], { type: "audio/wav" });
-  };
-
-  const startVoiceRecording = async () => {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Microphone access is not available in this browser.");
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
-      const chunks = [];
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunks.push(event.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        const originalBlob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        const wavBlob = await audioToWavBlob(originalBlob);
-
-        try {
-          setVoiceState((prev) => ({ ...prev, isRecording: false, status: "Uploading voice sample..." }));
-          const response = await fetch(`${API_BASE_URL}/api/audio/upload?subject=${encodeURIComponent(email || "demo-user")}`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "audio/wav"
-            },
-            body: wavBlob
-          });
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.message || "Voice sample upload failed");
-          }
-
-          const qualityScore = Math.min(100, Math.max(28, Number((data.result?.anomaly_score ?? 65).toFixed(1))));
-          const normalizedVoiceScore = 100 - qualityScore;
-
-          setVoiceAssessment({
-            score: normalizedVoiceScore,
-            status: "completed",
-            duration: 20
-          });
-
-          setVoiceState((prev) => ({
-            ...prev,
-            status: `${data.message || "Voice sample saved for audio analysis."} Voice score: ${normalizedVoiceScore.toFixed(1)}%.`,
-            fileName: data.file || "voice_sample.wav"
-          }));
-        } catch (error) {
-          setVoiceState((prev) => ({ ...prev, isRecording: false, status: error.message || "Voice upload failed." }));
-        } finally {
-          if (audioStreamRef.current) {
-            audioStreamRef.current.getTracks().forEach((track) => track.stop());
-            audioStreamRef.current = null;
-          }
-        }
-      };
-
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setVoiceTimeLeft(20);
-      setVoiceState({ isRecording: true, status: "Recording voice sample...", fileName: "" });
-
-      const timer = setInterval(() => {
-        setVoiceTimeLeft((current) => {
-          if (current <= 1) {
-            clearInterval(timer);
-            if (recorder.state !== "inactive") {
-              recorder.stop();
-            }
-            return 0;
-          }
-          return current - 1;
-        });
-      }, 1000);
-    } catch (error) {
-      setVoiceState({ isRecording: false, status: error.message || "Unable to start microphone recording.", fileName: "" });
-    }
-  };
-
-  const stopVoiceRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((track) => track.stop());
-      audioStreamRef.current = null;
-    }
-    setVoiceState((prev) => ({ ...prev, isRecording: false, status: "Stopping recording..." }));
-  };
+  const demoModeEnabled = import.meta.env.VITE_MINDSCAN_DEMO_MODE === "true";
 
   useEffect(() => {
     localStorage.setItem("token", token);
   }, [token]);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     if (!token) return;
 
     try {
@@ -330,26 +200,22 @@ function App() {
       setPreviousResults(history.slice(0, 5).map((item) => ({
         id: item.screeningId || item.id,
         timestamp: new Date(item.timestamp).toLocaleString(),
-        overview: item.overview || "Assessment",
-        score: Number(item.score || 0),
-        overall: Number(item.overall || 0)
+        overview: "Assessment report"
       })));
     } catch (error) {
       console.warn("History unavailable", error);
     }
-  };
+  }, [API_BASE_URL, token]);
 
   useEffect(() => {
-    if (token) {
-      loadHistory();
-    }
-  }, [token]);
+    if (!token) return undefined;
+    const timer = window.setTimeout(() => {
+      void loadHistory();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadHistory, token]);
 
   const isLoggedIn = Boolean(token);
-
-  const isAssessmentReady = useMemo(() => {
-    return memoryData.wordsRecalled.some(Boolean) && attentionData.reactionTimes.length > 0 && Object.values(orientationData).every(Boolean) && (languageData.sentence || languageData.animals);
-  }, [memoryData, attentionData, orientationData, languageData]);
 
   const handleAuth = async () => {
     try {
@@ -380,10 +246,26 @@ function App() {
     }
   };
 
-  const createScreeningSession = async () => {
-    const response = await fetch(`${API_BASE_URL}/api/screening/start`, {
+  const loadDemoReport = async () => {
+    setStatus("Loading the synthetic demo fixture...");
+    try {
+      const response = await fetch(API_BASE_URL + "/api/ml/demo-report");
+      const data = await response.json();
+      if (!response.ok || data.status !== "simulated_demo" || data.report?.simulated !== true) {
+        throw new Error(data.message || "The simulated demo is unavailable.");
+      }
+      setDemoReport(data.report);
+      setStatus("Synthetic demo loaded. No participant data was used or saved.");
+    } catch (error) {
+      setStatus(error.message || "Unable to load the simulated demo.");
+    }
+  };
+
+  const createScreeningSession = async (profile) => {
+    const response = await fetch(API_BASE_URL + "/api/screening/start", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ patientProfile: profile })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || "Unable to start screening");
@@ -391,65 +273,43 @@ function App() {
     return data.screening.id;
   };
 
-  const startScreening = async () => {
+  const startScreening = () => {
+    setStatus("");
+    setActiveStep("patient");
+  };
+
+  const beginAssessment = async (event) => {
+    event.preventDefault();
     try {
-      setStatus("Starting AI screening session...");
-      const id = await createScreeningSession();
+      setStatus("Saving consent and starting the research assessment...");
+      const profile = {
+        ...patientInfo,
+        age: Number(patientInfo.age),
+        educationYears: patientInfo.educationYears === "" ? null : Number(patientInfo.educationYears),
+        socioeconomicStatus: patientInfo.socioeconomicStatus === "" ? null : Number(patientInfo.socioeconomicStatus)
+      };
+      await createScreeningSession(profile);
       setMemoryData(buildMemoryState());
       setLanguageData(buildLanguageState());
-      setVoiceAssessment({ score: 0, status: "Not started", duration: 0 });
+      setVoiceAssessment({ status: "not_assessed", duration: null, language: "", speech_features: null, transcript_analysis: null, provenance: null });
       setActiveStep("memory");
       setStatus("Session started. Begin the assessment.");
-      return id;
     } catch (error) {
-      setStatus(error.message || "Unable to start screening");
-      return null;
+      setStatus(error.message || "Unable to start the research assessment.");
     }
   };
 
   const submitStep = async (taskType, taskPayload) => {
     if (!screeningId) return null;
-
     try {
-      const response = await fetch(`${API_BASE_URL}/api/screening/${screeningId}/response`, {
+      const response = await fetch(API_BASE_URL + "/api/screening/" + screeningId + "/response", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          taskType,
-          responseData: taskPayload,
-          reactionTime: taskPayload.averageReactionTime || taskPayload.responseTime || 0
-        })
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ taskType, responseData: taskPayload, reactionTime: taskPayload.responseTime ?? null })
       });
-
       const data = await response.json();
-      if (!response.ok) {
-        const message = data.message || "Failed to save task";
-        if (/screening not found/i.test(message)) {
-          const recoveredId = await createScreeningSession();
-          const retryResponse = await fetch(`${API_BASE_URL}/api/screening/${recoveredId}/response`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              taskType,
-              responseData: taskPayload,
-              reactionTime: taskPayload.averageReactionTime || taskPayload.responseTime || 0
-            })
-          });
-          const retryData = await retryResponse.json();
-          if (!retryResponse.ok) throw new Error(retryData.message || "Failed to save task after recovering session");
-          setStatus(`${taskType} task saved successfully after recovering the session.`);
-          return retryData;
-        }
-        throw new Error(message);
-      }
-
-      setStatus(`${taskType} task saved successfully.`);
+      if (!response.ok) throw new Error(data.message || "Failed to save task");
+      setStatus(taskType + " task saved successfully.");
       return data;
     } catch (error) {
       setStatus(error.message || "Error saving task");
@@ -459,100 +319,19 @@ function App() {
 
   const finishAssessment = async () => {
     if (!screeningId) return;
-
     try {
-      const response = await fetch(`${API_BASE_URL}/api/screening/${screeningId}/result`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` }
+      setStatus("Loading the assessment report...");
+      const response = await fetch(API_BASE_URL + "/api/screening/" + screeningId + "/result", {
+        headers: { Authorization: "Bearer " + token }
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Could not compute risk");
-
-      let mergedResult = { ...data.result };
-
-      try {
-        const agentResponse = await fetch(`${API_BASE_URL}/api/ai/analyze`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            screeningId,
-            taskScores: data.result.taskScores,
-            riskScore: data.result.riskScore,
-            overallScore: data.result.overallScore
-          })
-        });
-        const agentData = await agentResponse.json();
-        if (agentResponse.ok && agentData?.result) {
-          mergedResult = { ...mergedResult, ...agentData.result };
-        }
-      } catch (agentError) {
-        console.warn("Agent analysis unavailable", agentError);
-      }
-
-      try {
-        const mlResponse = await fetch(`${API_BASE_URL}/api/ml/predict`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify(buildDemoMlRecord(data.result))
-        });
-        const mlData = await mlResponse.json();
-        if (mlResponse.ok && mlData?.prediction) {
-          mergedResult = {
-            ...mergedResult,
-            mlProbability: Number(mlData.prediction.risk_probability ?? 0),
-            mlLabel: mlData.prediction.label || "Assessment",
-            mlPrediction: Number(mlData.prediction.prediction ?? 0)
-          };
-        }
-      } catch (mlError) {
-        console.warn("ML probability unavailable", mlError);
-      }
-
-      try {
-        const audioResponse = await fetch(`${API_BASE_URL}/api/audio/analysis`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
-        const audioData = await audioResponse.json();
-        if (audioResponse.ok && audioData?.result) {
-          mergedResult = {
-            ...mergedResult,
-            audioAgent: audioData.result
-          };
-        }
-      } catch (audioError) {
-        console.warn("Audio agent unavailable", audioError);
-      }
-
-      const historyEntry = {
-        id: screeningId,
-        timestamp: new Date().toLocaleString(),
-        overview: mergedResult.riskLevel || "Assessment",
-        score: mergedResult.riskScore || 0,
-        overall: mergedResult.overallScore || 0,
-      };
-
-      mergedResult.voiceAssessment = voiceAssessment;
-      mergedResult.voiceScore = Number(voiceAssessment.score || 0);
-
-      setPreviousResults((prev) => {
-        const deduped = prev.filter((item) => item.id !== historyEntry.id);
-        return [historyEntry, ...deduped].slice(0, 5);
-      });
-      await loadHistory();
-      setResult(mergedResult);
+      if (!response.ok) throw new Error(data.message || "Could not retrieve the assessment report");
+      setResult(data.result);
       setActiveStep("summary");
-      setStatus("AI risk analysis complete");
+      setStatus("Assessment report loaded.");
+      await loadHistory();
     } catch (error) {
-      setStatus(error.message || "Unable to compute summary");
+      setStatus(error.message || "Unable to retrieve the assessment report.");
     }
   };
 
@@ -565,7 +344,7 @@ function App() {
     setAttentionData({ correct: 0, wrong: 0, missed: 0, reactionTimes: [] });
     setOrientationData({ year: "", month: "", date: "", place: "" });
     setLanguageData(buildLanguageState());
-    setVoiceAssessment({ score: 0, status: "Not started", duration: 0 });
+    setVoiceAssessment({ status: "not_assessed", duration: null, language: "", speech_features: null, transcript_analysis: null, provenance: null });
   };
 
   const logout = () => {
@@ -622,6 +401,12 @@ function App() {
 
           <button className="primary-btn" onClick={handleAuth}>{authMode === "login" ? t.login : t.register}</button>
           {status && <p className="status-pill">{status}</p>}
+          {demoModeEnabled && (
+            <div className="demo-launch">
+              <button className="ghost-btn" type="button" onClick={loadDemoReport}>Open simulated demo report</button>
+              {demoReport && <ResultSummary result={demoReport} t={t} />}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -650,22 +435,7 @@ function App() {
           <div className="profile-list">
             <div><span>Language</span><strong>{language.toUpperCase()}</strong></div>
             <div><span>Screening ID</span><strong>{screeningId || "Not started"}</strong></div>
-            <div><span>Risk status</span><strong>{result ? result.riskLevel : "Awaiting score"}</strong></div>
-          </div>
-
-          <div className="voice-panel">
-            <h4>Voice sample</h4>
-            <p className="muted-text">Research-only recording for acoustic signal review. This is not a diagnosis.</p>
-            <div className="voice-indicator">
-              <span className={voiceState.isRecording ? "record-dot active" : "record-dot"}></span>
-              {voiceState.isRecording ? `Recording... ${voiceTimeLeft}s` : `Ready: ${voiceTimeLeft}s`}
-            </div>
-            {!voiceState.isRecording ? (
-              <button className="primary-btn" onClick={startVoiceRecording}>Record sample</button>
-            ) : (
-              <button className="ghost-btn" onClick={stopVoiceRecording}>Stop recording</button>
-            )}
-            {voiceState.status && <p className="status-pill">{voiceState.status}</p>}
+            <div><span>Report status</span><strong>{result ? "Loaded" : "Awaiting assessment"}</strong></div>
           </div>
 
           {!screeningId && (
@@ -682,7 +452,7 @@ function App() {
                   <div key={item.id} className="history-item">
                     <span>{item.timestamp}</span>
                     <strong>{item.overview}</strong>
-                    <small>{item.score} risk / {item.overall}% overall</small>
+                    <small>Research assessment record</small>
                   </div>
                 ))}
               </div>
@@ -694,9 +464,24 @@ function App() {
           {activeStep === "dashboard" && (
             <div className="empty-state">
               <h2>{t.startScreening}</h2>
-              <p>{t.subtitle}</p>
+              <p>Participation is optional. The report records observed task responses and clearly marks unavailable research inference.</p>
               <button className="primary-btn" onClick={startScreening}>{t.startScreening}</button>
             </div>
+          )}
+
+          {activeStep === "patient" && (
+            <form className="task-box" onSubmit={beginAssessment}>
+              <p className="eyebrow">Assessment intake</p>
+              <h2>Consent and session information</h2>
+              <p>Use a study code rather than a name when possible. Optional health-history fields are not model inputs.</p>
+              <label><span>Age (required)</span><input type="number" min="1" max="120" required value={patientInfo.age} onChange={(event) => setPatientInfo({ ...patientInfo, age: event.target.value })} /></label>
+              <label><span>Study identifier (optional)</span><input maxLength="80" value={patientInfo.patientIdentifier} onChange={(event) => setPatientInfo({ ...patientInfo, patientIdentifier: event.target.value })} /></label>
+              <label><span>Sex (optional)</span><select value={patientInfo.sex} onChange={(event) => setPatientInfo({ ...patientInfo, sex: event.target.value })}><option value="">Not provided</option><option value="female">Female</option><option value="male">Male</option><option value="intersex">Intersex</option><option value="prefer_not_to_say">Prefer not to say</option></select></label>
+              <label><span>Education years (optional)</span><input type="number" min="0" max="40" value={patientInfo.educationYears} onChange={(event) => setPatientInfo({ ...patientInfo, educationYears: event.target.value })} /></label>
+              <label><span>Handedness (optional)</span><select value={patientInfo.handedness} onChange={(event) => setPatientInfo({ ...patientInfo, handedness: event.target.value })}><option value="unknown">Unknown</option><option value="right">Right</option><option value="left">Left</option><option value="ambidextrous">Ambidextrous</option></select></label>
+              <label className="consent-field"><input type="checkbox" required checked={patientInfo.consent} onChange={(event) => setPatientInfo({ ...patientInfo, consent: event.target.checked })} /><span>I consent to storage of this research assessment and its task responses.</span></label>
+              <div className="task-actions"><button className="primary-btn" type="submit">Begin assessment</button></div>
+            </form>
           )}
 
           {activeStep === "memory" && (
@@ -743,10 +528,9 @@ function App() {
               t={t}
               value={orientationData}
               setValue={setOrientationData}
-              onNext={async () => {
-                const payload = { ...orientationData, responseTime: 10.5 };
-                await submitStep("orientation", payload);
-                setActiveStep("voice");
+              onNext={async (assessmentDate) => {
+                const payload = { ...orientationData, assessmentDate, responseTime: 10.5 };
+                if (await submitStep("orientation", payload)) setActiveStep("voice");
               }}
             />
           )}
@@ -754,15 +538,12 @@ function App() {
           {activeStep === "voice" && (
             <VoiceTask
               token={token}
-              email={email}
-              onVoiceResult={(assessment) => setVoiceAssessment(assessment)}
+              onVoiceResult={({ status, duration, language, speech_features, transcript_analysis, provenance }) => (
+                setVoiceAssessment({ status, duration, language, speech_features, transcript_analysis, provenance })
+              )}
               onFinish={async () => {
-                await submitStep("voice", {
-                  recorded: true,
-                  status: voiceAssessment.status || "completed",
-                  responseTime: voiceAssessment.duration || 20,
-                  voiceScore: voiceAssessment.score || 0
-                });
+                const saved = await submitStep("voice", buildVoiceTaskPayload(voiceAssessment));
+                if (!saved) return;
                 setActiveStep("language");
               }}
             />
@@ -779,8 +560,27 @@ function App() {
                   animals: languageData.animals,
                   responseTime: 14
                 };
-                await submitStep("language", payload);
-                await finishAssessment();
+                if (await submitStep("language", payload)) setActiveStep("motor");
+              }}
+            />
+          )}
+
+          {activeStep === "motor" && (
+            <MotorTask
+              hand={motorHand}
+              setHand={setMotorHand}
+              onNext={async (payload) => {
+                if (await submitStep("motor_tapping", payload)) setActiveStep("clinician");
+              }}
+            />
+          )}
+
+          {activeStep === "clinician" && (
+            <ClinicianObservationTask
+              value={clinicianData}
+              setValue={setClinicianData}
+              onFinish={async (payload) => {
+                if (await submitStep("clinician_observation", payload)) await finishAssessment();
               }}
             />
           )}
@@ -791,15 +591,6 @@ function App() {
               <div className="summary-actions">
                 <button className="primary-btn" onClick={resetAssessment}>Test again</button>
               </div>
-              <div className="architecture-panel">
-                <h3>Clinical report overview</h3>
-                <div className="architecture-grid">
-                  <div><span>Data Layer</span><strong>Longitudinal clinical dataset</strong></div>
-                  <div><span>Feature Layer</span><strong>MMSE, memory, attention, language, orientation</strong></div>
-                  <div><span>ML Layer</span><strong>Baseline classifier + risk scoring</strong></div>
-                  <div><span>Clinical Layer</span><strong>Referral & monitoring recommendation</strong></div>
-                </div>
-              </div>
             </>
           )}
 
@@ -807,6 +598,109 @@ function App() {
         </section>
       </main>
     </div>
+  );
+}
+
+function MotorTask({ hand, setHand, onNext }) {
+  const [running, setRunning] = useState(false);
+  const [remaining, setRemaining] = useState(10);
+  const [tapCount, setTapCount] = useState(0);
+  const [inputDevice, setInputDevice] = useState("unknown");
+  const [skipReason, setSkipReason] = useState("");
+  const timestampsRef = useRef([]);
+  const startedAtRef = useRef(null);
+
+  useEffect(() => {
+    if (!running) return undefined;
+    const timer = window.setInterval(() => {
+      const elapsed = (performance.now() - startedAtRef.current) / 1000;
+      if (elapsed >= 10) {
+        setRemaining(0);
+        setRunning(false);
+        window.clearInterval(timer);
+      } else {
+        setRemaining(Math.ceil(10 - elapsed));
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  const begin = () => {
+    timestampsRef.current = [];
+    setTapCount(0);
+    startedAtRef.current = performance.now();
+    setRemaining(10);
+    setRunning(true);
+  };
+
+  const recordTap = (event) => {
+    if (!running) return;
+    const pointerType = event.nativeEvent.pointerType;
+    if (["mouse", "touch", "pen"].includes(pointerType)) setInputDevice(pointerType);
+    timestampsRef.current.push(performance.now() - startedAtRef.current);
+    setTapCount(timestampsRef.current.length);
+  };
+
+  return (
+    <div className="task-box">
+      <p className="eyebrow">Optional motor task</p>
+      <h2>Exploratory tapping</h2>
+      <p>This 10-second task records input-device-dependent tap timing. It is not a neurological examination.</p>
+      <label><span>Hand used</span><select value={hand} onChange={(event) => setHand(event.target.value)} disabled={running}><option value="right">Right</option><option value="left">Left</option></select></label>
+      {!running && remaining === 10 && <button type="button" className="primary-btn" onClick={begin}>Start tapping</button>}
+      {running && <button type="button" className="attention-btn active" onPointerDown={recordTap}>Tap here · {remaining}s</button>}
+      {!running && remaining === 0 && <p role="status">{tapCount} taps recorded · {inputDevice} input</p>}
+      <label><span>Input device</span><select value={inputDevice} onChange={(event) => setInputDevice(event.target.value)} disabled={running}><option value="unknown">Unknown</option><option value="mouse">Mouse</option><option value="touch">Touch</option><option value="pen">Pen</option></select></label>
+      <div className="task-actions">
+        <button type="button" className="primary-btn" disabled={running || remaining !== 0} onClick={() => onNext({
+          hand,
+          inputDevice,
+          durationSeconds: 10,
+          completed: true,
+          timestampsMs: timestampsRef.current
+        })}>Save task and continue</button>
+      </div>
+      <details><summary>Skip this optional task</summary><label><span>Reason</span><input value={skipReason} onChange={(event) => setSkipReason(event.target.value)} maxLength={500} /></label><button type="button" className="ghost-btn" disabled={!skipReason.trim() || running} onClick={() => onNext({ status: "skipped", skipReason })}>Skip and continue</button></details>
+    </div>
+  );
+}
+
+function ClinicianObservationTask({ value, setValue, onFinish }) {
+  const observationLabels = {
+    tremor: "Tremor",
+    movementSlowness: "Movement slowness",
+    reducedAmplitude: "Reduced movement amplitude",
+    gaitBalance: "Gait or balance observation",
+    posture: "Posture",
+    handPosture: "Hand posture",
+    sensoryResponse: "Sensory response",
+    reflexes: "Reflexes"
+  };
+  const update = (field, nextValue) => setValue((current) => ({ ...current, [field]: nextValue }));
+
+  return (
+    <form className="task-box" onSubmit={(event) => { event.preventDefault(); onFinish(value); }}>
+      <p className="eyebrow">Optional clinician observations</p>
+      <h2>Record observed findings separately</h2>
+      <p>Enter only observations made by an assessor. These observations are not inferred from the digital tasks or used as a diagnosis.</p>
+      <label className="consent-field"><input type="checkbox" checked={value.skipped} onChange={(event) => update("skipped", event.target.checked)} /><span>Skip the clinician observation</span></label>
+      {value.skipped ? (
+        <label><span>Reason for skipping</span><input required maxLength={1000} value={value.skipReason} onChange={(event) => update("skipReason", event.target.value)} /></label>
+      ) : (
+        <>
+          <label><span>Observation date</span><input type="date" required value={value.observationDate} onChange={(event) => update("observationDate", event.target.value)} /></label>
+          <label><span>Assessor role</span><input required maxLength={100} value={value.assessorRole} onChange={(event) => update("assessorRole", event.target.value)} /></label>
+          <label><span>Side observed</span><select value={value.side} onChange={(event) => update("side", event.target.value)}><option value="not_applicable">Not applicable</option><option value="left">Left</option><option value="right">Right</option><option value="both">Both</option></select></label>
+          {Object.entries(observationLabels).map(([field, label]) => (
+            <label key={field}><span>{label}</span><select value={value.observations[field]} onChange={(event) => setValue((current) => ({ ...current, observations: { ...current.observations, [field]: event.target.value } }))}><option value="not_assessed">Not assessed</option><option value="present">Present</option><option value="absent">Absent</option><option value="unable_to_assess">Unable to assess</option></select></label>
+          ))}
+          <label><span>Clinician-entered MMSE (optional)</span><input type="number" min="0" max="30" value={value.clinicalMeasurements.mmse} onChange={(event) => setValue((current) => ({ ...current, clinicalMeasurements: { ...current.clinicalMeasurements, mmse: event.target.value } }))} /></label>
+          <label><span>Clinician-entered CDR (optional)</span><select value={value.clinicalMeasurements.cdr} onChange={(event) => setValue((current) => ({ ...current, clinicalMeasurements: { ...current.clinicalMeasurements, cdr: event.target.value } }))}><option value="">Not provided</option><option value="0">0</option><option value="0.5">0.5</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+          <label><span>Assessor notes (optional)</span><textarea maxLength={2000} value={value.notes} onChange={(event) => update("notes", event.target.value)} /></label>
+        </>
+      )}
+      <div className="task-actions"><button className="primary-btn" type="submit">Save observations and finish</button></div>
+    </form>
   );
 }
 
@@ -874,8 +768,8 @@ function MemoryTask({ t, value, setValue, onNext }) {
 
 function AttentionTask({ t, value, setValue, onNext }) {
   const [isTargetVisible, setIsTargetVisible] = useState(false);
-  const [timerId, setTimerId] = useState(null);
   const [round, setRound] = useState(1);
+  const timerIdRef = useRef(null);
 
   useEffect(() => {
     const delay = 1000 + Math.random() * 1800;
@@ -888,16 +782,20 @@ function AttentionTask({ t, value, setValue, onNext }) {
           missed: prev.missed + 1
         }));
         setIsTargetVisible(false);
+        timerIdRef.current = null;
         if (round >= 10) {
           return;
         }
         setRound((r) => r + 1);
       }, 1600);
-      setTimerId({ start, autoTimeout });
+      timerIdRef.current = { start, autoTimeout };
     }, delay);
 
-    return () => clearTimeout(delay);
-  }, [round]);
+    return () => {
+      clearTimeout(timeout);
+      if (timerIdRef.current?.autoTimeout) clearTimeout(timerIdRef.current.autoTimeout);
+    };
+  }, [round, setValue]);
 
   const handleClick = () => {
     if (!isTargetVisible) {
@@ -905,8 +803,9 @@ function AttentionTask({ t, value, setValue, onNext }) {
       return;
     }
 
-    const reaction = ((Date.now() - timerId.start) / 1000).toFixed(2);
-    clearTimeout(timerId.autoTimeout);
+    const reaction = ((Date.now() - timerIdRef.current.start) / 1000).toFixed(2);
+    clearTimeout(timerIdRef.current.autoTimeout);
+    timerIdRef.current = null;
     setValue((prev) => ({
       ...prev,
       correct: prev.correct + 1,
@@ -983,131 +882,212 @@ function OrientationTask({ t, value, setValue, onNext }) {
         </label>
       </div>
       <div className="task-actions">
-        <button className="primary-btn" onClick={onNext}>{t.next}</button>
+        <button className="primary-btn" onClick={() => onNext(formatLocalAssessmentDate(today))}>{t.next}</button>
       </div>
     </div>
   );
 }
 
-function VoiceTask({ token, email, onVoiceResult, onFinish }) {
+
+function VoiceTask({ token, onVoiceResult, onFinish }) {
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
   const [countdown, setCountdown] = useState(20);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [consented, setConsented] = useState(false);
   const [status, setStatus] = useState("Ready to record a short voice sample.");
-  const mediaRecorderRef = useRef(null);
+  const [transcript, setTranscript] = useState("");
+  const [transcriptAnalysis, setTranscriptAnalysis] = useState(null);
+  const [speechFeatures, setSpeechFeatures] = useState(null);
+  const [detectedLanguage, setDetectedLanguage] = useState("");
+  const [classifierResult, setClassifierResult] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const recorderRef = useRef(null);
   const streamRef = useRef(null);
+  const timerRef = useRef(null);
+  const startTimeRef = useRef(null);
+  const previewUrlRef = useRef("");
+
+  const stopRecording = () => {
+    clearInterval(timerRef.current);
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+  };
+
+  const uploadRecording = (blob, contentType) => new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", API_BASE_URL + "/api/audio/upload");
+    request.setRequestHeader("Authorization", "Bearer " + token);
+    request.setRequestHeader("Content-Type", contentType);
+    request.timeout = 185000;
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
+    });
+    request.addEventListener("load", () => {
+      let data;
+      try { data = JSON.parse(request.responseText); }
+      catch { reject(new Error("The audio service returned an unreadable response. Please retry.")); return; }
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(data.error?.message || data.message || "Audio transcription failed."));
+        return;
+      }
+      resolve(data);
+    });
+    request.addEventListener("error", () => reject(new Error("Network error while uploading audio. Check your connection and retry.")));
+    request.addEventListener("timeout", () => reject(new Error("Audio processing timed out. Try a shorter recording.")));
+    request.send(blob);
+  });
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    if (!isRecording) return undefined;
+    timerRef.current = window.setInterval(() => {
       setCountdown((current) => {
         if (current <= 1) {
-          clearInterval(timer);
+          clearInterval(timerRef.current);
+          if (recorderRef.current?.state === "recording") recorderRef.current.stop();
           return 0;
         }
         return current - 1;
       });
     }, 1000);
-
-    return () => clearInterval(timer);
-  }, []);
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-  };
+    return () => clearInterval(timerRef.current);
+  }, [isRecording]);
 
   const startRecording = async () => {
     try {
+      if (!consented) throw new Error("Please confirm consent before recording.");
+      if (!token) throw new Error("Please sign in before recording.");
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone access is unavailable in this browser.");
+      if (!window.MediaRecorder) throw new Error("Audio recording is not supported by this browser.");
+      if (transcript && !window.confirm("Replace the previous transcript with a new recording?")) return;
+
+      setClassifierResult(null);
+      setTranscript("");
+      setDetectedLanguage("");
+      setTranscriptAnalysis(null);
+      setSpeechFeatures(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
+        .find((type) => window.MediaRecorder.isTypeSupported(type));
+      const recorder = mimeType
+        ? new window.MediaRecorder(stream, { mimeType })
+        : new window.MediaRecorder(stream);
       const chunks = [];
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) chunks.push(event.data);
-      };
-
+      recorder.ondataavailable = (event) => { if (event.data?.size) chunks.push(event.data); };
       recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        const arrayBuffer = await blob.arrayBuffer();
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-
-        const channelData = [];
-        for (let channel = 0; channel < decoded.numberOfChannels; channel += 1) {
-          channelData.push(decoded.getChannelData(channel));
-        }
-
-        const samples = channelData[0];
-        const mean = samples.reduce((sum, value) => sum + Math.abs(value), 0) / samples.length;
-        const score = Math.min(100, Math.max(0, (mean * 2500) * 100));
-        const assessment = { score: Number(score.toFixed(1)), status: "completed", duration: 20 };
-
-        setStatus(`Voice sample captured. Audio quality score: ${assessment.score.toFixed(1)}.`);
-        if (onVoiceResult) {
-          onVoiceResult(assessment);
-        }
-
+        setIsRecording(false);
+        setRecordingSeconds(Number(Math.min(20, Math.max(0, (Date.now() - startTimeRef.current) / 1000)).toFixed(1)));
+        setIsUploading(true);
+        setUploadProgress(0);
+        setStatus("Uploading securely for temporary transcription...");
         try {
-          const response = await fetch(`${API_BASE_URL}/api/audio/upload?subject=${encodeURIComponent(email || "demo-user")}`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "audio/wav"
-            },
-            body: new Blob([blob], { type: "audio/wav" })
+          const blobType = recorder.mimeType || "audio/webm";
+          const blob = new Blob(chunks, { type: blobType });
+          if (!blob.size) throw new Error("No audio was captured. Check microphone permission and try again.");
+          if (blob.size > 12 * 1024 * 1024) throw new Error("This recording exceeds 12 MB. Please record a shorter sample.");
+          if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+          previewUrlRef.current = URL.createObjectURL(blob);
+          setPreviewUrl(previewUrlRef.current);
+          const data = await uploadRecording(blob, blobType.split(";")[0].toLowerCase());
+          const result = data.transcription;
+          if (!result || result.status !== "success") throw new Error("The server did not return a transcript.");
+          const transcriptText = String(result.transcript || "").trim();
+          setTranscript(transcriptText);
+          setDetectedLanguage(result.language || "unknown");
+          const analysis = data.transcript_analysis || result.transcript_analysis || null;
+          setTranscriptAnalysis(analysis);
+          setSpeechFeatures(data.speech_features || result.speech_features || null);
+          setClassifierResult(data.classifier || { status: "unavailable" });
+          setStatus(transcriptText
+            ? "Transcription completed. Please review it; automatic transcription may be inaccurate."
+            : "No speech could be transcribed. You may retry or continue without this task.");
+          onVoiceResult?.({
+            status: transcriptText ? "completed" : "empty",
+            duration: result.duration_seconds ?? null,
+            language: result.language || "unknown",
+            speech_features: data.speech_features || result.speech_features || null,
+            transcript_analysis: analysis,
+            provenance: result.provenance || null
           });
-
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.message || "Voice sample could not be uploaded.");
-          setStatus(`${data.message || "Voice assessment recorded successfully."} Voice score: ${assessment.score.toFixed(1)}%.`);
         } catch (error) {
-          setStatus(error.message || "The voice sample could not be evaluated.");
+          setStatus(error.message || "Audio transcription failed.");
+          setTranscriptAnalysis(null);
+          setSpeechFeatures(null);
+          setClassifierResult({ status: "unavailable" });
+          onVoiceResult?.({ status: "unavailable", duration: null, language: "", speech_features: null, transcript_analysis: null, provenance: null });
         } finally {
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach((track) => track.stop());
-            streamRef.current = null;
-          }
-          setIsRecording(false);
-          await audioContext.close();
+          stream.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+          setIsUploading(false);
         }
       };
-
+      recorderRef.current = recorder;
       recorder.start();
-      mediaRecorderRef.current = recorder;
+      setCountdown(20);
+      setRecordingSeconds(0);
+      startTimeRef.current = Date.now();
       setIsRecording(true);
-      setStatus("Recording in progress. Please speak naturally for 15–20 seconds.");
-
-      setTimeout(() => {
-        if (recorder.state !== "inactive") {
-          stopRecording();
-        }
-      }, 20000);
+      setStatus("Recording. Please describe the picture for up to 20 seconds.");
     } catch (error) {
-      setStatus(error.message || "Microphone access is not available.");
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setStatus(error.message || "Unable to start recording.");
     }
   };
+
+  useEffect(() => () => {
+    clearInterval(timerRef.current);
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+  }, []);
 
   return (
     <div className="task-box">
       <p className="eyebrow">Voice assessment</p>
-      <h2>Record a short voice sample and speak naturally for 20 seconds.</h2>
-      <div className="memory-timer-box">Time remaining: {countdown}s</div>
+      <h2>Describe the picture in your own words</h2>
+      <p>This optional research task displays the automatic transcript and literal descriptive observations. It does not assess picture details or produce a diagnosis.</p>
+      <div className="picture-stimulus" role="img" aria-label="A landscape illustration with a house, trees, path, flowers, and pond">
+        <svg viewBox="0 0 600 280" aria-hidden="true">
+          <rect width="600" height="280" fill="#d9efff" /><circle cx="500" cy="58" r="34" fill="#f5c45c" />
+          <rect y="175" width="600" height="105" fill="#8fcf9b" /><path d="M0 215 Q140 180 270 220 T600 205 V280 H0Z" fill="#68ad7f" />
+          <path d="M247 280 L325 179 L400 280" fill="#d9c39a" /><rect x="92" y="105" width="110" height="86" rx="4" fill="#fff3d4" />
+          <path d="M78 109 L147 57 L216 109Z" fill="#b85f57" /><rect x="133" y="143" width="30" height="48" fill="#74564b" />
+          <g fill="#397c55"><circle cx="55" cy="140" r="32" /><circle cx="258" cy="128" r="35" /><circle cx="430" cy="151" r="31" /></g>
+          <ellipse cx="502" cy="226" rx="59" ry="22" fill="#6dbad0" />
+        </svg>
+      </div>
+      <label className="consent-field">
+        <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
+        <span>I consent to microphone use and temporary transcription for this task.</span>
+      </label>
+      <div className="memory-timer-box">
+        {isRecording ? "Recording: " + Math.min(20, 20 - countdown) + "s / 20s" : "Recorded duration: " + recordingSeconds.toFixed(1) + "s"}
+      </div>
       <div className="voice-recording-box">
-        <button className="primary-btn" onClick={isRecording ? stopRecording : startRecording}>
-          {isRecording ? "Stop recording" : "Start recording"}
+        <button className="primary-btn" type="button" onClick={isRecording ? stopRecording : startRecording} disabled={isUploading}>
+          {isRecording ? "Stop recording" : isUploading ? "Uploading and transcribing..." : "Start recording"}
         </button>
-        <p>{status}</p>
+        <p role="status">{status}</p>
+        {isUploading && <div className="upload-progress" role="status"><progress max="100" value={uploadProgress} aria-label="Audio upload progress" /><span>{uploadProgress}% uploaded</span></div>}
+        {previewUrl && <div className="recording-preview"><label htmlFor="voice-playback">Local recording playback</label><audio id="voice-playback" controls src={previewUrl} /><small>The preview stays in this browser temporarily and is not saved to the assessment.</small></div>}
+        {detectedLanguage && <p>Detected language: {detectedLanguage}</p>}
+        {transcript
+          ? <div className="transcript-panel"><h3>Transcript</h3><p>{transcript}</p></div>
+          : transcriptAnalysis?.status === "empty" && <p>No transcript text was recognized.</p>}
+        {transcriptAnalysis && <TranscriptObservationList analysis={transcriptAnalysis} />}
+        <SpeechTimingObservations speechFeatures={speechFeatures} />
+        {classifierResult?.status === "available_research_only"
+          ? <p className="research-model-output" role="status">Separate experimental speech-model output: <strong>{classifierResult.prediction?.predicted_label || "unavailable"}</strong>. This is not produced by the transcript rules, is not a diagnosis or personal risk estimate, and class scores are uncalibrated.</p>
+          : <p role="status">Research analysis only — classifier unavailable. Transcript observations are not model predictions.</p>}
       </div>
-      <div className="task-actions">
-        <button className="primary-btn" onClick={onFinish} disabled={isRecording}>Continue</button>
-      </div>
+      <div className="task-actions"><button className="primary-btn" type="button" onClick={onFinish} disabled={isRecording || isUploading}>Continue</button></div>
     </div>
   );
 }
 
 function LanguageTask({ t, value, setValue, onFinish }) {
-  const [sentenceCountdown, setSentenceCountdown] = useState(5);
   const [typingCountdown, setTypingCountdown] = useState(30);
   const [sentenceVisible, setSentenceVisible] = useState(false);
   const [typingEnabled, setTypingEnabled] = useState(false);
@@ -1162,7 +1142,7 @@ function LanguageTask({ t, value, setValue, onFinish }) {
     <div className="task-box">
       <p className="eyebrow">{t.language}</p>
       <h2>{t.languagePrompt}</h2>
-      <div className="memory-timer-box">Time remaining: {typingEnabled ? typingCountdown : sentenceCountdown}s</div>
+      <div className="memory-timer-box">{typingEnabled ? `Time remaining: ${typingCountdown}s` : "Prepare to remember the sentence"}</div>
       <div className="sentence-prompt-box">
         <strong>Sentence to repeat:</strong>{" "}
         {sentenceVisible
@@ -1199,97 +1179,189 @@ function LanguageTask({ t, value, setValue, onFinish }) {
 }
 
 function ResultSummary({ result, t }) {
-  const agents = Array.isArray(result?.agents) ? result.agents : [];
-  const audioAgent = result?.audioAgent || null;
-  const riskPercent = typeof result?.mlProbability === "number" ? (result.mlProbability * 100).toFixed(1) : null;
+  const taskResults = result?.taskResults || {};
   const flags = Array.isArray(result?.flags) ? result.flags : [];
-  const voiceScore = typeof result?.voiceScore === "number" ? result.voiceScore : (typeof result?.voiceAssessment?.score === "number" ? result.voiceAssessment.score : null);
+  const isSimulatedDemo = result?.demo === true && result?.simulated === true;
+  const modelOutput = result?.modelOutput;
+  const cognitiveTaskScore = result?.cognitiveTaskScore || result?.descriptiveTaskSummary;
+  const voiceAnalysisSummary = result?.voiceAnalysisSummary;
+  const cognitivePrediction = result?.cognitivePrediction || modelOutput;
+  const voicePrediction = result?.voicePrediction;
+  const taskNames = { memory: "Memory recall", attention: "Attention task", orientation: "Orientation", language: "Language fluency" };
 
   return (
     <div className="result-panel">
       <p className="eyebrow">{t.summary}</p>
-      <h2>Clinical referral profile</h2>
+      <h2>{isSimulatedDemo ? "Simulated demo report" : "Digital assessment report"}</h2>
+      <div className="report-warning" role="note">
+        {isSimulatedDemo
+          ? "SIMULATED DEMO ONLY - synthetic test fixtures, not a real assessment, trained model result, diagnosis, or risk estimate."
+          : "Research and educational prototype only. This report does not diagnose or rule out dementia and does not provide a clinical risk score."}
+      </div>
+      {!isSimulatedDemo && cognitiveTaskScore && (
+        <section className="report-section" aria-label="Cognitive assessment">
+          <h3>Cognitive Assessment</h3>
+          <p>
+            <strong>Task-performance score: </strong>
+            {cognitiveTaskScore.index_percent == null
+              ? "Not measured"
+              : `${cognitiveTaskScore.index_percent}/100`}
+            {" "}({cognitiveTaskScore.status})
+          </p>
+          <p>{cognitiveTaskScore.method}</p>
+          {cognitiveTaskScore.not_measured_tasks?.length > 0 && (
+            <p>Missing/not measured tasks: {cognitiveTaskScore.not_measured_tasks.join(", ")}</p>
+          )}
+          <p>{cognitiveTaskScore.limitation}</p>
+        </section>
+      )}
+      <div className="metric-grid">
+        {Object.entries(taskNames).map(([key, title]) => (
+          <div key={key} className="report-item"><span>{title}</span><strong>{taskResults[key]?.status || "not assessed"}</strong></div>
+        ))}
+      </div>
+      <section className="report-section">
+        <h3>Voice Analysis</h3>
+        {voiceAnalysisSummary && (
+          <>
+            <p>
+              <strong>Experimental speech-fluency indicator: </strong>
+              {voiceAnalysisSummary.score_percent == null
+                ? "Not measured"
+                : `${voiceAnalysisSummary.score_percent}/100`}
+              {" "}({voiceAnalysisSummary.status})
+            </p>
+            <p>Available components: {voiceAnalysisSummary.available_score_components?.join(", ") || "None"}</p>
+            <p>{voiceAnalysisSummary.method}</p>
+            <p>Feature availability: {voiceAnalysisSummary.feature_coverage_percent == null ? "Not measured" : `${voiceAnalysisSummary.feature_coverage_percent}%`}</p>
+            {voiceAnalysisSummary.missing_fields?.length > 0 && (
+              <p>Not measured: {voiceAnalysisSummary.missing_fields.join(", ")}</p>
+            )}
+            <p>{voiceAnalysisSummary.limitation}</p>
+          </>
+        )}
+        {isSimulatedDemo && <p>Synthetic transcript fixture only - no audio recording or transcription was performed.</p>}
+        <p>Status: {taskResults.voice?.measurements?.status || taskResults.voice?.status || "not assessed"}</p>
+        {taskResults.voice?.measurements?.language && <p>Language: {taskResults.voice.measurements.language}</p>}
+        {taskResults.voice?.measurements?.duration != null && <p>Recorded duration: {Number(taskResults.voice.measurements.duration).toFixed(1)} seconds</p>}
+        <TranscriptObservationList analysis={taskResults.voice?.measurements?.transcript_analysis} />
+        {!isSimulatedDemo && <p>Transcript text and raw audio are not retained in the report; descriptive counts and measured timing summaries are saved.</p>}
+        <SpeechTimingObservations speechFeatures={taskResults.voice?.measurements?.speech_features} />
+        <p>Experimental transcript and audio observations only. English-specific rules may be unreliable due to language, accent, education, fluency, background noise, and other conditions. Any voice model output below is kept separate from these measurements.</p>
+      </section>
+      <section className="report-section" aria-label="Overall assessment">
+        <h3>Overall Assessment</h3>
+        <p>Cognitive task-performance and voice results are shown separately. They are not combined into a dementia-risk percentage.</p>
+        <p><strong>Cognitive:</strong> {cognitiveTaskScore?.index_percent == null ? "Not measured" : `${cognitiveTaskScore.index_percent}/100`}</p>
+        <p><strong>Voice experimental indicator:</strong> {voiceAnalysisSummary?.score_percent == null ? "Not measured" : `${voiceAnalysisSummary.score_percent}/100`}</p>
+      </section>
+      <section className="report-section">
+        <h3>Cognitive prediction</h3>
+        {isSimulatedDemo
+          ? <p>Simulated software fixture only; no trained model ran.</p>
+          : cognitivePrediction?.status === "available_research_only"
+            ? <PredictionResult prediction={cognitivePrediction} label="Cognitive model" />
+            : <PredictionStatus prediction={cognitivePrediction} modality="cognitive" />}
+      </section>
+      <section className="report-section">
+        <h3>Voice prediction</h3>
+        {voicePrediction?.status === "available_research_only"
+          ? <PredictionResult prediction={voicePrediction} label="Voice model" />
+          : <PredictionStatus prediction={voicePrediction} modality="voice" />}
+      </section>
+      <details className="research-details">
+        <summary>Research details and model diagnostics</summary>
+        <p>Predictions require a versioned, authorized model bundle whose feature schema matches this assessment. Task scores and speech observations are never substituted for model output.</p>
+        <pre>{JSON.stringify({ cognitive: cognitivePrediction, voice: voicePrediction }, null, 2)}</pre>
+      </details>
+      {flags.length > 0 && <section className="report-section"><h3>Assessment notes</h3><ul className="flag-list">{flags.map((flag, index) => <li key={index}>{flag}</li>)}</ul></section>}
+    </div>
+  );
+}
 
-      {voiceScore !== null && (
-        <div className="voice-summary-banner">
-          <strong>Voice screening score:</strong> {voiceScore.toFixed(1)}% • {result?.voiceAssessment?.status || "completed"}
+function PredictionResult({ prediction, label }) {
+  const scores = prediction?.output?.class_scores || {};
+  return (
+    <div className="prediction-card">
+      <p><strong>{label} output:</strong> {prediction.output?.predicted_label || "Available"}</p>
+      <p>Version: {prediction.model_version || "Not reported"} · Evaluation: {prediction.evaluation_status || "Not reported"}</p>
+      {Object.keys(scores).length > 0 && (
+        <div className="prediction-scores">
+          {Object.entries(scores).map(([name, score]) => (
+            <span key={name}><strong>{name}</strong> {Number(score).toFixed(3)}</span>
+          ))}
         </div>
       )}
-
-      <div className="summary-header">
-        <div className="score-ring">
-          <strong>{result.riskScore}</strong>
-          <span>AI risk score</span>
-        </div>
-
-        <div className="risk-card">
-          <span className="mini-label">ML model probability</span>
-          <strong>{riskPercent ? `${riskPercent}%` : "N/A"}</strong>
-          <small>{result.mlLabel || "Model output pending"}</small>
-        </div>
-
-        <div className="risk-card">
-          <span className="mini-label">Voice screening</span>
-          <strong>{voiceScore !== null ? `${voiceScore.toFixed(1)}%` : "N/A"}</strong>
-          <small>{result?.voiceAssessment?.status || "Voice not evaluated"}</small>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <div><span>Risk grade</span><strong>{result.riskLevel}</strong></div>
-        <div><span>Overall score</span><strong>{result.overallScore}%</strong></div>
-        <div><span>Clinical action</span><strong>{result.recommendation}</strong></div>
-      </div>
-
-      <div className="report-grid">
-        <div className="report-item">
-          <span>Voice assessment</span>
-          <strong>{voiceScore !== null ? `${voiceScore.toFixed(1)}%` : "Not available"}</strong>
-        </div>
-        <div className="report-item">
-          <span>Audio research agent</span>
-          <strong>{audioAgent ? (audioAgent.screening_indicator || "Available") : "Pending"}</strong>
-        </div>
-        <div className="report-item">
-          <span>ML model output</span>
-          <strong>{riskPercent ? `${riskPercent}%` : "N/A"}</strong>
-        </div>
-      </div>
-
-      <div className="agent-summary-box">
-        <h3>Multi-agent AI Interpretation</h3>
-        <p>{result.agentSummary || "AI agents are aggregating the cognitive patterns."}</p>
-      </div>
-
-      <div className="agent-grid">
-        {agents.map((agent) => (
-          <div key={agent.name} className="agent-card">
-            <div className="agent-head">
-              <strong>{agent.name}</strong>
-              <span>{agent.confidence}% confidence</span>
-            </div>
-            <p>{agent.insight}</p>
-          </div>
-        ))}
-
-        {audioAgent && (
-          <div className="agent-card">
-            <div className="agent-head">
-              <strong>{audioAgent.model_name || "Audio Agent"}</strong>
-              <span>{audioAgent.status || "available"}</span>
-            </div>
-            <p>{audioAgent.limitation || "Research audio pattern evaluation is available, but it is not a dementia diagnosis."}</p>
-            <small>{audioAgent.anomaly_score ?? 0}% anomaly signal • {audioAgent.screening_indicator || "insufficient_data"}</small>
-          </div>
-        )}
-      </div>
-
-      <ul className="flag-list">
-        {flags.map((flag, index) => (
-          <li key={index}>{flag}</li>
-        ))}
-      </ul>
+      <p className="muted-text">Research output only. Scores are uncalibrated and are not clinical probabilities.</p>
     </div>
+  );
+}
+
+function PredictionStatus({ prediction, modality }) {
+  const label = modality === "voice" ? "voice" : "cognitive";
+  return (
+    <div className="prediction-status">
+      <p><strong>{label === "voice" ? "Voice model not enabled" : "Cognitive model not enabled"}</strong></p>
+      <p>{prediction?.reason || `No compatible ${label} research model is configured.`}</p>
+      <p className="muted-text">Measured {label === "voice" ? "speech observations" : "task-performance results"} remain available above.</p>
+    </div>
+  );
+}
+
+function TranscriptObservationList({ analysis }) {
+  const observations = analysis?.observations;
+  if (!observations) {
+    return <section className="report-section" aria-label="Transcript observations">
+      <h3>Experimental rule-based speech observations — not a diagnosis</h3>
+      <p>Not measured because a successful transcript analysis was unavailable.</p>
+    </section>;
+  }
+  const display = (value) => value == null ? "Not measured" : value;
+  const formatCounts = (counts) => counts == null
+    ? "Not measured"
+    : Object.entries(counts)
+      .filter(([, count]) => count > 0)
+      .map(([term, count]) => `${term}: ${count}`)
+      .join(", ") || "0";
+  return (
+    <section className="report-section" aria-label="Transcript observations">
+      <h3>Experimental rule-based speech observations — not a diagnosis</h3>
+      <p>Literal transcript counts only. No threshold or impairment score is applied; ordinary speech can include these patterns.</p>
+      <ul className="feature-list">
+        <li>Words: {display(observations.word_count)}</li>
+        <li>Sentences: {display(observations.sentence_count)}</li>
+        <li>Average words per sentence: {display(observations.average_words_per_sentence)}</li>
+        <li>English filler-word counts by token: {formatCounts(observations.filler_word_counts)}</li>
+        <li>Adjacent repeated words: {display(observations.repeated_adjacent_word_count)}</li>
+        <li>Repeated short phrases: {display(observations.repeated_short_phrase_count)}</li>
+        <li>Unique-word ratio: {display(observations.unique_word_ratio)}</li>
+        <li>Self-correction marker counts: {formatCounts(observations.self_correction_marker_counts)}</li>
+        <li>Selected vague-expression counts: {formatCounts(observations.selected_vague_expression_counts)}</li>
+      </ul>
+      <p>Known prompt: picture description. No semantic relevance, omitted-detail, or picture-scoring comparison is performed. English-specific rules may be unreliable due to language, accent, education, fluency, background noise, and other conditions.</p>
+    </section>
+  );
+}
+
+function SpeechTimingObservations({ speechFeatures }) {
+  const features = speechFeatures?.features || {};
+  const display = (value) => value == null ? "Not measured" : value;
+  return (
+    <section className="report-section" aria-label="Speech timing observations">
+      <h3>Audio-timing observations</h3>
+      <ul className="feature-list">
+        <li>Audio duration: {display(features.audio_duration_seconds)}{features.audio_duration_seconds == null ? "" : " seconds"}</li>
+        <li>Speaking duration: {display(features.speaking_duration_seconds)}{features.speaking_duration_seconds == null ? "" : " seconds"}</li>
+        <li>Filler ratio: {display(features.filler_word_ratio_percent)}{features.filler_word_ratio_percent == null ? "" : "%"}</li>
+        <li>Speech rate from valid timed speech: {display(features.speech_rate_words_per_minute)}{features.speech_rate_words_per_minute == null ? "" : " words/min"}</li>
+        <li>Observed timed segment gaps: {display(features.pause_count)}</li>
+        <li>Mean observed gap: {display(features.mean_pause_seconds)}{features.mean_pause_seconds == null ? "" : " seconds"}</li>
+        <li>Maximum observed gap: {display(features.maximum_pause_seconds)}{features.maximum_pause_seconds == null ? "" : " seconds"}</li>
+        <li>Estimated non-speech ratio from segment timing: {features.estimated_non_speech_ratio == null ? "Not measured" : `${(features.estimated_non_speech_ratio * 100).toFixed(1)}%`}</li>
+        <li>Pitch statistics: Not measured</li>
+      </ul>
+      <p>Timing values require valid audio duration and transcription segment timestamps. The ratio is not waveform-based silence detection and may include noise or omitted speech.</p>
+    </section>
   );
 }
 

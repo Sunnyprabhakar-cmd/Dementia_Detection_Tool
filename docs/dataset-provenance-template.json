@@ -1,0 +1,8 @@
+{
+  "dataset_name": "REPLACE_WITH_VERIFIED_DATASET_NAME",
+  "release": "REPLACE_WITH_EXACT_RELEASE_OR_ACCESSION",
+  "source_url": "https://REPLACE_WITH_OFFICIAL_SOURCE",
+  "authorization_reference": "REPLACE_WITH_NON_SECRET_APPROVAL_REFERENCE",
+  "authorization_confirmed": false,
+  "sha256": "REPLACE_WITH_64_CHARACTER_SHA256"
+}

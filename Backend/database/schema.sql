@@ -77,7 +77,15 @@ CREATE TABLE screening_results (
 
     risk_level VARCHAR(20),
 
+    risk_score NUMERIC(5,2),
+
     probability NUMERIC(5,4),
+
+    task_scores JSONB,
+
+    recommendation TEXT,
+
+    flags JSONB,
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 

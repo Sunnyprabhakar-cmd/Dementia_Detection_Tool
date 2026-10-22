@@ -1,90 +1,171 @@
+"""Create aggregate-only reports for explicitly authorized tabular datasets."""
+
+import argparse
+import hashlib
 import json
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
+if __package__:
+    from .train_model import validate_provenance
+else:
+    from train_model import validate_provenance
 
-DATASET_PATH = Path(__file__).resolve().parent.parent / "data" / "dementia_dataset.csv"
-AUDIO_ROOT = Path(__file__).resolve().parent.parent / "data" / "dementia"
-REPORT_PATH = Path(__file__).resolve().parent.parent.parent / "artifacts" / "reports" / "data_audit" / "oasis_dementia_audit.json"
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def build_audit_report():
-    df = pd.read_csv(DATASET_PATH)
-    audio_files = sorted(AUDIO_ROOT.rglob("*.wav"))
+def build_audit_report(
+    frame: pd.DataFrame,
+    *,
+    target_column: str,
+    participant_column: str,
+    session_column: str | None = None,
+    provenance: dict[str, Any] | None = None,
+    dataset_sha256: str | None = None,
+) -> dict[str, Any]:
+    if not frame.columns.is_unique:
+        raise ValueError("Dataset column names must be unique.")
+    required = [target_column, participant_column]
+    if session_column:
+        required.append(session_column)
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError("Dataset is missing required columns: " + ", ".join(missing))
+    if frame[participant_column].isna().any():
+        raise ValueError("Participant identifiers must not be missing.")
 
-    report = {
-        "dataset_name": "dementia_dataset.csv",
-        "source": "OASIS-style longitudinal dementia dataset (project-local copy)",
-        "file_type": "CSV",
+    target = frame[target_column]
+    participant = frame[participant_column]
+    report: dict[str, Any] = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "provenance": {
+            key: provenance.get(key)
+            for key in (
+                "dataset_name",
+                "release",
+                "source_url",
+                "authorization_reference",
+                "license_or_agreement",
+                "model_use_permission",
+                "model_training_and_inference_authorized",
+                "authorization_confirmed",
+            )
+        }
+        if provenance
+        else None,
+        "dataset_sha256": dataset_sha256,
         "shape": {
-            "rows": int(df.shape[0]),
-            "columns": int(df.shape[1])
+            "rows": int(frame.shape[0]),
+            "columns": int(frame.shape[1]),
         },
         "columns": [
             {
-                "name": col,
-                "dtype": str(df[col].dtype),
-                "missing_count": int(df[col].isna().sum())
+                "name": str(column),
+                "dtype": str(frame[column].dtype),
+                "missing_count": int(frame[column].isna().sum()),
+                "missing_fraction": float(frame[column].isna().mean()),
             }
-            for col in df.columns
+            for column in frame.columns
         ],
-        "missing_values": {
-            col: int(df[col].isna().sum()) for col in df.columns
-        },
         "duplicates": {
-            "row_duplicates": int(df.duplicated().sum()),
-            "subject_duplicates": int(df["Subject ID"].duplicated().sum()) if "Subject ID" in df.columns else 0
+            "exact_duplicate_rows": int(frame.duplicated().sum()),
+            "duplicate_participant_session_keys": (
+                int(frame.duplicated([participant_column, session_column]).sum())
+                if session_column
+                else None
+            ),
         },
-        "unique_subjects": int(df["Subject ID"].nunique()) if "Subject ID" in df.columns else 0,
-        "repeated_measurements": {
-            "subject_ids_with_multiple_visits": int((df["Subject ID"].value_counts() > 1).sum()) if "Subject ID" in df.columns else 0,
-            "max_visits_per_subject": int(df["Subject ID"].value_counts().max()) if "Subject ID" in df.columns else 0
+        "participants": {
+            "unique": int(participant.nunique(dropna=True)),
+            "with_repeated_rows": int((participant.value_counts() > 1).sum()),
         },
-        "label_distribution": {
-            str(k): int(v) for k, v in df["Group"].value_counts(dropna=False).to_dict().items()
-        } if "Group" in df.columns else {},
-        "class_imbalance": {
-            "majority_class": str(df["Group"].value_counts(dropna=False).idxmax()) if "Group" in df.columns else None,
-            "minority_class": str(df["Group"].value_counts(dropna=False).idxmin()) if "Group" in df.columns else None,
-            "imbalance_ratio": float(df["Group"].value_counts(dropna=False).max() / max(df["Group"].value_counts(dropna=False).min(), 1)) if "Group" in df.columns else None
+        "sessions": (
+            {
+                "column": session_column,
+                "unique_participant_session_pairs": int(
+                    frame[[participant_column, session_column]]
+                    .drop_duplicates()
+                    .shape[0]
+                ),
+            }
+            if session_column
+            else None
+        ),
+        "target": {
+            "column": target_column,
+            "missing_count": int(target.isna().sum()),
+            "class_distribution": {
+                str(label): int(count)
+                for label, count in target.value_counts(dropna=True).items()
+            },
         },
-        "potential_identifiers": [
-            col for col in df.columns if "id" in col.lower() or "subject" in col.lower()
+        "notices": [
+            "Aggregate schema audit only; no participant identifiers or row values are included.",
+            "This report does not establish label validity, authorization, feature compatibility, or model performance.",
         ],
-        "potential_leakage_columns": [
-            "Group",
-            "CDR",
-            "MMSE"
-        ] if "Group" in df.columns else [],
-        "audio_summary": {
-            "file_count": len(audio_files),
-            "folder_count": len({str(p.parent) for p in audio_files}),
-            "sample_files": [str(p.relative_to(AUDIO_ROOT)) for p in audio_files[:10]],
-            "file_extensions": sorted({p.suffix.lower() for p in audio_files})
-        },
-        "data_limitations": [
-            "The tabular dataset is longitudinal but the audio files are not explicitly linked to the same subject IDs used in the tabular cohort.",
-            "The Group label is an observed clinical category and should not be treated as a clinically validated diagnostic label for deployment.",
-            "MMSE, CDR, and related clinical variables are not safe to treat as model-free inputs in a generalized risk screening prototype without checking temporal leakage and intended prediction objective."
-        ]
     }
-
     return report
 
 
-def main():
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    report = build_audit_report()
-    REPORT_PATH.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps({
-        "status": "success",
-        "report_path": str(REPORT_PATH),
-        "rows": report["shape"]["rows"],
-        "columns": report["shape"]["columns"],
-        "audio_files": report["audio_summary"]["file_count"]
-    }, indent=2))
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Audit an explicitly authorized CSV without exposing row values or identifiers."
+    )
+    parser.add_argument("--data", required=True, help="CSV covered by the provenance manifest.")
+    parser.add_argument("--provenance", required=True, help="Authorization/provenance JSON.")
+    parser.add_argument("--target", required=True, help="Explicit target/label column.")
+    parser.add_argument("--participant", required=True, help="Participant grouping column.")
+    parser.add_argument("--session", help="Optional session/visit key column.")
+    parser.add_argument("--output", required=True, help="Private JSON report destination.")
+    return parser
+
+
+def main() -> int:
+    try:
+        args = build_parser().parse_args()
+        data_path = Path(args.data).expanduser()
+        provenance = validate_provenance(args.data, args.provenance)
+        frame = pd.read_csv(data_path)
+        report = build_audit_report(
+            frame,
+            target_column=args.target,
+            participant_column=args.participant,
+            session_column=args.session,
+            provenance=provenance,
+            dataset_sha256=sha256_file(data_path),
+        )
+        output_path = Path(args.output).expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "success",
+                    "rows": report["shape"]["rows"],
+                    "columns": report["shape"]["columns"],
+                    "participants": report["participants"]["unique"],
+                    "output": str(output_path),
+                }
+            )
+        )
+        return 0
+    except (OSError, ValueError, json.JSONDecodeError, pd.errors.ParserError) as error:
+        print(json.dumps({"status": "blocked_or_error", "message": str(error)}), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

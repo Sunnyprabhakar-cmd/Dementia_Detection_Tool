@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "description": "Only features derivable from the current MindScan saved task responses and live transcription measurements. No demographics, MRI values, clinician scores, diagnostic labels, or inferred measurements are included.",
+  "modalities": {
+    "cognitive_tasks": {
+      "description": "Counts and reaction time computed from saved memory, attention, orientation, and language task responses.",
+      "features": [
+        { "name": "memory_recall_count", "type": "number", "unit": "words", "source": "saved memory words shown and recalled" },
+        { "name": "memory_presented_count", "type": "number", "unit": "words", "source": "saved memory words shown" },
+        { "name": "attention_correct_count", "type": "number", "unit": "trials", "source": "saved attention task" },
+        { "name": "attention_incorrect_count", "type": "number", "unit": "trials", "source": "saved attention task" },
+        { "name": "attention_missed_count", "type": "number", "unit": "trials", "source": "saved attention task" },
+        { "name": "attention_mean_reaction_time_ms", "type": "number", "unit": "milliseconds", "source": "saved attention reaction times" },
+        { "name": "orientation_correct_count", "type": "number", "unit": "items", "source": "server-scored saved orientation task" },
+        { "name": "orientation_scored_count", "type": "number", "unit": "items", "source": "server-scored saved orientation task" },
+        { "name": "language_sentence_character_count", "type": "number", "unit": "characters", "source": "saved language task sentence response" },
+        { "name": "language_list_response_count", "type": "number", "unit": "items", "source": "saved language task list response" }
+      ]
+    },
+    "speech": {
+      "description": "Transcript and timing features emitted by the current successful faster-whisper pipeline. Timing features are nullable unless supported by valid decoded audio and segment timestamps.",
+      "features": [
+        { "name": "voice_audio_duration_seconds", "type": "number", "unit": "seconds", "source": "decoded audio duration" },
+        { "name": "voice_speaking_duration_seconds", "type": "number", "unit": "seconds", "source": "union of valid transcription segment intervals" },
+        { "name": "voice_transcript_word_count", "type": "number", "unit": "words", "source": "Unicode transcript tokenizer" },
+        { "name": "voice_transcript_character_count", "type": "number", "unit": "characters", "source": "trimmed transcript text" },
+        { "name": "voice_speech_rate_words_per_minute", "type": "number", "unit": "words per minute", "source": "word count divided by valid timed speech duration" },
+        { "name": "voice_pause_count", "type": "number", "unit": "gaps", "source": "positive gaps between valid transcription segments" },
+        { "name": "voice_mean_pause_seconds", "type": "number", "unit": "seconds", "source": "mean positive gap between valid transcription segments" },
+        { "name": "voice_maximum_pause_seconds", "type": "number", "unit": "seconds", "source": "maximum positive gap between valid transcription segments" },
+        { "name": "voice_estimated_non_speech_ratio", "type": "number", "unit": "ratio", "source": "audio duration minus summed transcription segment duration; not waveform silence detection" },
+        { "name": "voice_filler_word_count", "type": "number", "unit": "tokens", "source": "English filler-token count; unavailable for other detected languages" },
+        { "name": "voice_filler_word_ratio_percent", "type": "number", "unit": "percent", "source": "English filler-token count divided by transcript word count; unavailable for empty or other-language transcripts" },
+        { "name": "voice_adjacent_repeated_word_count", "type": "number", "unit": "tokens", "source": "case-folded adjacent transcript tokens" },
+        { "name": "voice_lexical_diversity", "type": "number", "unit": "ratio", "source": "unique transcript tokens divided by transcript token count" },
+        { "name": "voice_mean_sentence_length_words", "type": "number", "unit": "words per sentence", "source": "punctuation-delimited transcript sentences" }
+      ]
+    }
+  }
+}

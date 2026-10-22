@@ -1,0 +1,155 @@
+{
+  "dataset_name": "dementia_dataset.csv",
+  "source": "OASIS-style longitudinal dementia dataset (project-local copy)",
+  "file_type": "CSV",
+  "shape": {
+    "rows": 373,
+    "columns": 15
+  },
+  "columns": [
+    {
+      "name": "Subject ID",
+      "dtype": "str",
+      "missing_count": 0
+    },
+    {
+      "name": "MRI ID",
+      "dtype": "str",
+      "missing_count": 0
+    },
+    {
+      "name": "Group",
+      "dtype": "str",
+      "missing_count": 0
+    },
+    {
+      "name": "Visit",
+      "dtype": "int64",
+      "missing_count": 0
+    },
+    {
+      "name": "MR Delay",
+      "dtype": "int64",
+      "missing_count": 0
+    },
+    {
+      "name": "M/F",
+      "dtype": "str",
+      "missing_count": 0
+    },
+    {
+      "name": "Hand",
+      "dtype": "str",
+      "missing_count": 0
+    },
+    {
+      "name": "Age",
+      "dtype": "int64",
+      "missing_count": 0
+    },
+    {
+      "name": "EDUC",
+      "dtype": "int64",
+      "missing_count": 0
+    },
+    {
+      "name": "SES",
+      "dtype": "float64",
+      "missing_count": 19
+    },
+    {
+      "name": "MMSE",
+      "dtype": "float64",
+      "missing_count": 2
+    },
+    {
+      "name": "CDR",
+      "dtype": "float64",
+      "missing_count": 0
+    },
+    {
+      "name": "eTIV",
+      "dtype": "int64",
+      "missing_count": 0
+    },
+    {
+      "name": "nWBV",
+      "dtype": "float64",
+      "missing_count": 0
+    },
+    {
+      "name": "ASF",
+      "dtype": "float64",
+      "missing_count": 0
+    }
+  ],
+  "missing_values": {
+    "Subject ID": 0,
+    "MRI ID": 0,
+    "Group": 0,
+    "Visit": 0,
+    "MR Delay": 0,
+    "M/F": 0,
+    "Hand": 0,
+    "Age": 0,
+    "EDUC": 0,
+    "SES": 19,
+    "MMSE": 2,
+    "CDR": 0,
+    "eTIV": 0,
+    "nWBV": 0,
+    "ASF": 0
+  },
+  "duplicates": {
+    "row_duplicates": 0,
+    "subject_duplicates": 223
+  },
+  "unique_subjects": 150,
+  "repeated_measurements": {
+    "subject_ids_with_multiple_visits": 150,
+    "max_visits_per_subject": 5
+  },
+  "label_distribution": {
+    "Nondemented": 190,
+    "Demented": 146,
+    "Converted": 37
+  },
+  "class_imbalance": {
+    "majority_class": "Nondemented",
+    "minority_class": "Converted",
+    "imbalance_ratio": 5.135135135135135
+  },
+  "potential_identifiers": [
+    "Subject ID",
+    "MRI ID"
+  ],
+  "potential_leakage_columns": [
+    "Group",
+    "CDR",
+    "MMSE"
+  ],
+  "audio_summary": {
+    "file_count": 131,
+    "folder_count": 84,
+    "sample_files": [
+      "Abe Burrows\\AbeBurrows_5.wav",
+      "Aileen Hernandez\\aileenhernandez_0.wav",
+      "Aileen Hernandez\\aileenhernandez_5_1.wav",
+      "Aileen Hernandez\\aileenhernandez_5_2.wav",
+      "Alan Ramsey\\alanramsey_10.wav",
+      "Allan Burns\\AllanBurns_5.wav",
+      "Andrew Sachs\\andrewsachs_10.wav",
+      "Andrew Sachs\\andrewsachs_15.wav",
+      "Annette Michelson\\annettemichelson_15.wav",
+      "Antony Flew\\antonyflew_10.wav"
+    ],
+    "file_extensions": [
+      ".wav"
+    ]
+  },
+  "data_limitations": [
+    "The tabular dataset is longitudinal but the audio files are not explicitly linked to the same subject IDs used in the tabular cohort.",
+    "The Group label is an observed clinical category and should not be treated as a clinically validated diagnostic label for deployment.",
+    "MMSE, CDR, and related clinical variables are not safe to treat as model-free inputs in a generalized risk screening prototype without checking temporal leakage and intended prediction objective."
+  ]
+}

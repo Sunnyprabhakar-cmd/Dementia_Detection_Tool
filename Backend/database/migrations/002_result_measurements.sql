@@ -1,0 +1,5 @@
+ALTER TABLE screening_results
+    ADD COLUMN IF NOT EXISTS risk_score NUMERIC(5,2),
+    ADD COLUMN IF NOT EXISTS task_scores JSONB,
+    ADD COLUMN IF NOT EXISTS recommendation TEXT,
+    ADD COLUMN IF NOT EXISTS flags JSONB;
