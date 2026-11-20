@@ -20,10 +20,10 @@ export const userLogin= async(req,res)=>{
     }
 };
 
-//user registration controller logic
+//user registration controller logic (public registration is strictly patient-only)
 export const userRegistration=async(req,res)=>{
     try{
-        const {name,email,password,referBy}=req.body;
+        const {name,email,password,referBy,role,preferredLanguage}=req.body;
 
         if(!name || !email || !password){
 
@@ -32,7 +32,13 @@ export const userRegistration=async(req,res)=>{
             })
         }
 
-        const result=await Register(name,email,password,referBy);
+        if (role !== undefined && role !== null && String(role).trim().toLowerCase() !== "patient") {
+            return res.status(403).json({
+                message: "Public registration is restricted to patient accounts."
+            });
+        }
+
+        const result=await Register(name,email,password,referBy,preferredLanguage);
         return res.status(200).json(result);
     }catch(error){
         return res.status(error.statusCode || 500).json({

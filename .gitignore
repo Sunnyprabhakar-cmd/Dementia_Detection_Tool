@@ -17,3 +17,15 @@ artifacts/models/
 *.webm
 *.mp3
 *.m4a
+*.nii
+*.nii.gz
+*.dcm
+*.pt
+*.log
+*.zip
+Backend/storage/
+Backend/uploads/
+research-data/radiata_mri/raw/
+research-data/radiata_mri/manifest.csv
+research-data/dementianet/raw/
+h -u origin main --force-with-lease

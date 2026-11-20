@@ -33,3 +33,13 @@ export const authMiddleware=(req,res,next)=>{
     });
 }
 };
+
+export const requireRole = (...allowedRoles) => (req, res, next) => {
+    const role = req.user?.role || "patient";
+    if (!allowedRoles.includes(role)) {
+        return res.status(403).json({
+            message: "Access denied for your account role"
+        });
+    }
+    return next();
+};

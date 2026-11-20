@@ -152,9 +152,58 @@ export const summarizeTranscriptAnalysis = (analysis) => {
   };
 };
 
+export const sanitizeAcousticClassifierPoc = (poc) => {
+  if (!poc || typeof poc !== "object" || Array.isArray(poc)) return null;
+  const scores = poc.prediction?.class_scores && typeof poc.prediction.class_scores === "object"
+    ? Object.fromEntries(
+        Object.entries(poc.prediction.class_scores)
+          .filter(([k, v]) => typeof k === "string" && typeof v === "number" && Number.isFinite(v))
+          .map(([k, v]) => [k.slice(0, 32), Number(v.toFixed(6))])
+      )
+    : null;
+  return {
+    status: typeof poc.status === "string" ? poc.status.slice(0, 48) : "unavailable",
+    classification_outcome: typeof poc.classification_outcome === "string"
+      ? poc.classification_outcome.slice(0, 32)
+      : "Model unavailable",
+    model_version: typeof poc.model_version === "string" ? poc.model_version.slice(0, 64) : null,
+    model_name: typeof poc.model_name === "string" ? poc.model_name.slice(0, 64) : null,
+    dataset: typeof poc.dataset === "string" ? poc.dataset.slice(0, 120) : null,
+    prediction: poc.prediction && typeof poc.prediction === "object"
+      ? {
+          predicted_label: typeof poc.prediction.predicted_label === "string"
+            ? poc.prediction.predicted_label.slice(0, 32)
+            : null,
+          class_scores: scores,
+          scores_are_calibrated_probabilities: false
+        }
+      : null,
+    decision_threshold: poc.decision_threshold && typeof poc.decision_threshold === "object"
+      ? {
+          threshold_version: typeof poc.decision_threshold.threshold_version === "string"
+            ? poc.decision_threshold.threshold_version.slice(0, 64)
+            : null,
+          cutoff: typeof poc.decision_threshold.cutoff === "number" ? poc.decision_threshold.cutoff : null,
+          clinically_validated: false,
+          status_label: typeof poc.decision_threshold.status_label === "string"
+            ? poc.decision_threshold.status_label.slice(0, 120)
+            : "Experimental classification — threshold not clinically validated",
+          explanation: typeof poc.decision_threshold.explanation === "string"
+            ? poc.decision_threshold.explanation.slice(0, 400)
+            : null
+        }
+      : null,
+    message: typeof poc.message === "string" ? poc.message.slice(0, 200) : null,
+    missing_inputs: Array.isArray(poc.missing_inputs)
+      ? poc.missing_inputs.filter((item) => typeof item === "string").slice(0, 10)
+      : []
+  };
+};
+
 export const buildVoiceTaskPayload = (assessment = {}) => {
   const allowedStatuses = new Set(["completed", "empty", "unavailable", "not_assessed"]);
   const status = allowedStatuses.has(assessment.status) ? assessment.status : "unavailable";
+  const sanitizedPoc = sanitizeAcousticClassifierPoc(assessment.acoustic_classifier_poc);
   return {
     recorded: status === "completed" || status === "empty",
     status,
@@ -167,6 +216,13 @@ export const buildVoiceTaskPayload = (assessment = {}) => {
     speech_features: assessment.speech_features && typeof assessment.speech_features === "object"
       ? assessment.speech_features
       : null,
-    transcript_analysis: summarizeTranscriptAnalysis(assessment.transcript_analysis)
+    transcript_analysis: summarizeTranscriptAnalysis(assessment.transcript_analysis),
+    ...(Array.isArray(assessment.quality_warnings) && assessment.quality_warnings.length
+      ? { quality_warnings: assessment.quality_warnings.filter((w) => typeof w === "string").slice(0, 10) }
+      : {}),
+    ...(typeof assessment.quality_reliable === "boolean"
+      ? { quality_reliable: assessment.quality_reliable }
+      : {}),
+    ...(sanitizedPoc ? { acoustic_classifier_poc: sanitizedPoc } : {})
   };
 };

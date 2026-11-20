@@ -63,7 +63,7 @@ try {
   }
 
   const requiredColumns = {
-    users: ["id", "name", "email", "password_hash"],
+    users: ["id", "name", "email", "password_hash", "role", "preferred_language"],
     screening_sessions: ["id", "user_id", "status", "started_at", "completed_at"],
     screening_patient_profiles: ["screening_id", "age", "consent_at"],
     task_responses: ["id", "screening_id", "task_type", "response_data", "score"],
@@ -71,7 +71,10 @@ try {
       "id", "screening_id", "memory_score", "attention_score",
       "language_score", "orientation_score", "task_scores",
       "recommendation", "flags", "risk_score"
-    ]
+    ],
+    notifications: ["id", "user_id", "title", "message", "is_read"],
+    clinician_reviews: ["id", "screening_id", "clinician_id", "notes", "review_status"],
+    clinician_patient_assignments: ["id", "clinician_id", "patient_id"]
   };
   for (const [table, columns] of Object.entries(requiredColumns)) {
     const result = await pool.query(

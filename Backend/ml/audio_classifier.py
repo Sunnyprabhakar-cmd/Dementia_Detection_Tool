@@ -222,3 +222,198 @@ def classify_configured_audio(speech_features: Any) -> dict[str, Any]:
             "Audio model inference could not be completed.",
             model_version=model_version,
         )
+
+
+DEFAULT_ACOUSTIC_POC_DIR = (
+    PROJECT_ROOT / "artifacts" / "models" / "speech_poc" / "dementianet-acoustic-v1.0.0"
+)
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _poc_unavailable(
+    message: str,
+    *,
+    outcome: str = "Model unavailable",
+    model_version: str | None = None,
+    missing_inputs: list[str] | None = None,
+) -> dict[str, Any]:
+    res = _unavailable(message, model_version=model_version, missing_inputs=missing_inputs)
+    res["classification_outcome"] = outcome
+    return res
+
+
+def classify_acoustic_poc(
+    speech_intelligence: Any,
+    *,
+    artifact_directory: str | Path | None = None,
+    model_name: str | None = None,
+) -> dict[str, Any]:
+    """Run experimental DementiaNet acoustic PoC inference with strict gating and SHA-256 verification."""
+    artifact_path = Path(
+        artifact_directory
+        or os.environ.get("MINDSCAN_ACOUSTIC_POC_DIR")
+        or DEFAULT_ACOUSTIC_POC_DIR
+    ).expanduser()
+    metadata_path = artifact_path / "metadata.json"
+    if not metadata_path.is_file():
+        return _poc_unavailable(
+            "Experimental acoustic PoC model bundle is not installed.",
+            outcome="Model unavailable",
+            missing_inputs=["acoustic_poc_model_bundle"],
+        )
+
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _poc_unavailable("Experimental acoustic PoC metadata is unreadable.", outcome="Model unavailable")
+
+    model_version = metadata.get("model_version")
+    if metadata.get("modality") != "speech_acoustic_poc" or not isinstance(model_version, str):
+        return _poc_unavailable("Incompatible acoustic PoC model bundle.", outcome="Model unavailable", model_version=model_version)
+
+    if not isinstance(speech_intelligence, dict):
+        return _poc_unavailable(
+            "Speech intelligence features are missing.",
+            outcome="Inconclusive",
+            model_version=model_version,
+            missing_inputs=["speech_intelligence"],
+        )
+
+    language = str(
+        speech_intelligence.get("language")
+        or (speech_intelligence.get("language_capabilities") or {}).get("language_code")
+        or ""
+    ).strip().lower()
+    if language != "en":
+        return _poc_unavailable(
+            "Experimental acoustic PoC model is trained on English speech only; non-English audio is not scored.",
+            outcome="Inconclusive",
+            model_version=model_version,
+            missing_inputs=["english_speech_required"],
+        )
+
+    if speech_intelligence.get("quality_reliable") is not True:
+        return _poc_unavailable(
+            "Audio quality did not pass reliability checks for experimental acoustic inference.",
+            outcome="Inconclusive",
+            model_version=model_version,
+            missing_inputs=["reliable_audio_quality"],
+        )
+
+    selected_model = model_name or os.environ.get("MINDSCAN_ACOUSTIC_POC_MODEL_NAME") or "logistic_regression"
+    models_meta = metadata.get("models")
+    if not isinstance(models_meta, dict) or selected_model not in models_meta:
+        return _poc_unavailable(
+            f"Acoustic PoC model '{selected_model}' is not available in bundle.",
+            outcome="Model unavailable",
+            model_version=model_version,
+        )
+
+    model_entry = models_meta[selected_model]
+    model_rel_path = str(model_entry.get("file") or model_entry.get("artifact") or "")
+    model_file = artifact_path / model_rel_path
+    expected_sha = model_entry.get("sha256")
+    if not model_rel_path or not model_file.is_file() or not isinstance(expected_sha, str) or _sha256_file(model_file) != expected_sha:
+        return _poc_unavailable(
+            "Acoustic PoC model artifact failed integrity verification.",
+            outcome="Model unavailable",
+            model_version=model_version,
+        )
+
+    feature_schema = metadata.get("feature_schema")
+    acoustic = speech_intelligence.get("acoustic_features")
+    if not isinstance(feature_schema, list) or not isinstance(acoustic, dict):
+        return _poc_unavailable(
+            "Acoustic feature measurements are unavailable for this recording.",
+            outcome="Inconclusive",
+            model_version=model_version,
+            missing_inputs=["acoustic_features"],
+        )
+
+    vector: list[float] = []
+    missing: list[str] = []
+    for item in feature_schema:
+        name = item.get("name") if isinstance(item, dict) else None
+        val = acoustic.get(name) if isinstance(name, str) else None
+        if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(float(val)):
+            missing.append(str(name))
+        else:
+            vector.append(float(val))
+    if missing:
+        return _poc_unavailable(
+            "Required acoustic features are missing or non-finite; inference skipped without fabrication.",
+            outcome="Inconclusive",
+            model_version=model_version,
+            missing_inputs=missing[:10],
+        )
+
+    try:
+        import warnings
+        import joblib
+        import numpy as np
+
+        estimator = joblib.load(model_file)
+        x_row = np.asarray([vector], dtype=float)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            pred_raw = str(estimator.predict(x_row)[0])
+            proba = estimator.predict_proba(x_row)[0]
+            classes = [str(c) for c in estimator.classes_]
+    except Exception:
+        return _poc_unavailable(
+            "Acoustic PoC model inference could not be completed.",
+            outcome="Model unavailable",
+            model_version=model_version,
+        )
+
+    label_mapping = metadata.get("label_mapping") or {"0": "nodementia", "1": "dementia"}
+    predicted_label = str(label_mapping.get(pred_raw, pred_raw))
+    class_scores = {
+        str(label_mapping.get(cls, cls)): round(float(score), 6)
+        for cls, score in zip(classes, proba)
+    }
+    classification_outcome = "Dementia" if predicted_label == "dementia" else "Non-dementia"
+
+    return {
+        "status": "available_experimental_poc",
+        "classification_outcome": classification_outcome,
+        "model_version": model_version,
+        "model_name": selected_model,
+        "dataset": "DementiaNet (weak biographical labels, English YouTube interviews)",
+        "prediction": {
+            "predicted_class": pred_raw,
+            "predicted_label": predicted_label,
+            "class_scores": class_scores,
+            "scores_are_calibrated_probabilities": False,
+        },
+        "decision_threshold": {
+            "threshold_version": "dementianet-val-default-0.50/v1.0",
+            "score_key": "dementia",
+            "cutoff": 0.50,
+            "selection_split": "validation (default 0.50; not tuned on test set)",
+            "clinically_validated": False,
+            "status_label": "Experimental classification — threshold not clinically validated",
+            "explanation": (
+                "Default 0.50 boundary on the uncalibrated logistic_regression relative score "
+                "(validation n=91: sensitivity 0.4231, specificity 0.7077, precision 0.3667, F1 0.3929; "
+                "untouched test n=91: sensitivity 0.6154, specificity 0.7846, precision 0.5333, F1 0.5714, ROC-AUC 0.7562). "
+                "Not a clinically validated diagnostic cutoff."
+            ),
+        },
+        "message": "Experimental speech-based research screening output — not a clinical diagnosis.",
+        "limitations": metadata.get(
+            "limitations",
+            [
+                "Experimental speech-based research screening output — not a clinical diagnosis.",
+            ],
+        ),
+    }

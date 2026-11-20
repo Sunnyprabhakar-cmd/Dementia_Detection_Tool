@@ -188,6 +188,10 @@ export const createUploadAudioHandler = ({ transcribe = runTranscriber } = {}) =
             status: "unavailable",
             message: "Research analysis only — classifier unavailable."
           };
+      const acousticClassifierPoc = transcription.acoustic_classifier_poc
+        && typeof transcription.acoustic_classifier_poc === "object"
+        ? transcription.acoustic_classifier_poc
+        : null;
       return res.status(200).json({
         status: "success",
         processing_status: "completed",
@@ -195,7 +199,10 @@ export const createUploadAudioHandler = ({ transcribe = runTranscriber } = {}) =
         transcription,
         speech_features: speechFeatures,
         transcript_analysis: transcription.transcript_analysis || null,
+        speech_intelligence: transcription.speech_intelligence || null,
+        quality_warnings: transcription.quality_warnings || [],
         classifier,
+        acoustic_classifier_poc: acousticClassifierPoc,
         error: null
       });
     } catch (error) {

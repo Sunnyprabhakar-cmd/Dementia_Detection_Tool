@@ -1,1147 +1,382 @@
-# MindScan AI — Intelligent Cognitive Assessment and Dementia Research Platform
+# MindScan AI — Early-Stage Dementia Screening & Research Prototype
 
-MindScan AI is a full-stack, research-oriented cognitive assessment prototype. It
-combines browser-based cognitive tasks, optional consent-driven speech
-transcription, deterministic descriptive measurements, guarded research-model
-inference, and persisted assessment reports.
+MindScan AI is a full-stack, research-oriented cognitive, speech, physical-observation, and experimental neuroimaging screening prototype. It combines browser-based cognitive tasks, consent-driven audio recording/upload with offline `faster-whisper` transcription, 44-feature acoustic extraction, an experimental speaker-disjoint DementiaNet speech classifier (`dementianet-acoustic-v1.0.0`), an optional attendant-administered physical examination record, optional structural Brain MRI experimental analysis (`radiata-oasis-mri-v1.0.0`, `volumetric_logreg`), separate Patient and Clinician portals, PostgreSQL persistence, and downloadable PDF reports. Brain CT AI inference remains explicitly unavailable because no authorized labelled brain CT dementia dataset is available.
 
-The project is suitable for a university demonstration, software engineering
-evaluation, and controlled research prototyping. It is **not a medical device,
-diagnostic service, validated screening instrument, or substitute for a
-qualified clinical assessment**. Task scores, speech observations, model
-classes, and the educational simulated percentage are intentionally presented
-as separate concepts.
+> **Important Non-Diagnostic Disclaimer:** This project is an academic and research prototype. **It is NOT a medical device, diagnostic tool, or validated clinical screening instrument.** Displayed scores, speech-based predictions, and experimental MRI research labels are not clinically validated, use uncalibrated relative scores rather than diagnostic probabilities, and must not be used to diagnose or exclude dementia. Clinical evaluation by a qualified healthcare professional is required.
 
-## Table of contents
+---
 
-- [Project overview](#project-overview)
-- [Features and scope](#features-and-scope)
-- [Technology stack](#technology-stack)
-- [System architecture](#system-architecture)
-- [Assessment workflow and data flow](#assessment-workflow-and-data-flow)
-- [Data and field reference](#data-and-field-reference)
-- [Datasets and artifacts](#datasets-and-artifacts)
-- [Machine-learning algorithms](#machine-learning-algorithms)
-- [Speech analysis](#speech-analysis)
-- [Model inference and API contract](#model-inference-and-api-contract)
-- [Architecture and design decisions](#architecture-and-design-decisions)
-- [Installation and execution](#installation-and-execution)
-- [Environment variables](#environment-variables)
-- [Testing and evaluation](#testing-and-evaluation)
-- [Deployment](#deployment)
-- [Limitations and future work](#limitations-and-future-work)
-- [References](#references)
+## Table of Contents
 
-## Project overview
+1. [Project Introduction](#1-project-introduction)
+2. [Features](#2-features)
+3. [Technology Stack](#3-technology-stack)
+4. [System Architecture](#4-system-architecture)
+5. [Installation and Setup (Windows)](#5-installation-and-setup-windows)
+6. [Project Folder Structure](#6-project-folder-structure)
+7. [Database Schema & Migrations](#7-database-schema--migrations)
+8. [Authentication and Security](#8-authentication-and-security)
+9. [Machine Learning and Audio Processing](#9-machine-learning-and-audio-processing)
+10. [Experimental MRI Dataset, Model & Age Confounding (Stages 14–14.2)](#10-experimental-mri-dataset-model--age-confounding-stages-14142)
+11. [Scoring and Results](#11-scoring-and-results)
+12. [Testing and Verification](#12-testing-and-verification)
+13. [Limitations and Future Scope](#13-limitations-and-future-scope)
+14. [License, Dataset Restrictions & Acknowledgements](#14-license-dataset-restrictions--acknowledgements)
 
-### Problem statement
+---
 
-Cognitive screening workflows often need to combine several small observations:
-memory recall, attention, orientation, language responses, intake context, and,
-where explicitly consented, speech measurements. A research prototype must
-preserve the distinction between:
+## 1. Project Introduction
 
-1. what a participant actually did in an application task;
-2. what deterministic software measured from that response;
-3. what an experimental model classified; and
-4. what would require independent clinical validation.
+- **Project Name:** MindScan AI (Dementia Detection Tool)
+- **Problem Statement:** Early cognitive and communication screening often relies on fragmented paper questionnaires that do not capture speech timing/acoustic measurements, drawing geometry, or longitudinal task history in a structured, privacy-preserving workflow. At the same time, naive prototypes often conflate descriptive task scores with ML model predictions or clinical diagnoses.
+- **Motivation:** Build a transparent, modular full-stack platform that separates:
+  1. deterministic cognitive task performance (**Assessment Performance Score /100**),
+  2. **Assessment Completeness (%)** (excluding skipped/missing tasks rather than zero-imputing them),
+  3. experimental speech classification (**DementiaNet PoC**) with strict quality/language gating,
+  4. optional clinician/attendant physical observations and review notes, and
+  5. optional experimental structural Brain MRI analysis (`radiata-oasis-mri-v1.0.0`, isolated from cognitive scoring and speech classification, while keeping Brain CT AI inference explicitly unavailable).
+- **Objectives:**
+  - Provide separate, role-verified **Patient** and **Clinician** portals.
+  - Capture 10 structured screening tasks plus an optional attendant-administered physical examination and optional brain MRI/CT imaging upload.
+  - Extract 44 acoustic/prosodic features and run SHA-256-verified experimental speech inference without persisting raw audio or raw transcripts.
+  - Validate 3D NIfTI/DICOM brain imaging uploads, run experimental volumetric MRI inference (`volumetric_logreg`) when an authorized MRI bundle is present, and mark CT AI inference unavailable.
+  - Persist results safely in PostgreSQL (Neon) and export consistent multi-page PDF reports.
+- **Intended Users:**
+  - **Patients:** Register/login, complete cognitive & voice assessments, view personal history, and download PDF reports.
+  - **Clinicians (Administrator-Provisioned):** Review assigned patient screenings, inspect physical examination observations, add review notes, and download assigned patient PDF reports.
 
-MindScan implements that separation end to end. It stores an authenticated
-assessment session, derives an allowlisted feature record on the server, and
-optionally invokes a versioned Python model bundle through a bounded subprocess.
-If a compatible model is missing, incompatible, unauthorized, or unavailable,
-the API returns an explicit unavailable state rather than fabricating a result.
+---
 
-### Objectives
+## 2. Features
 
-- Provide a resumable, authenticated assessment workflow.
-- Collect reproducible memory, attention, orientation, and language task data.
-- Keep optional audio processing separate from cognitive-task inference.
-- Persist safe assessment measurements and report history in PostgreSQL.
-- Support reproducible, participant-grouped research experiments.
-- Validate model bundles, schemas, provenance, hashes, labels, and inputs before
-  inference.
-- Make unavailable, synthetic, and research-only outputs obvious in the UI.
+### Authentication & Role-Separated Portals (Stage 12)
+- **Role-Selection Entry (`/login`):** Separate **Patient Portal** and **Clinician Portal** cards.
+- **Patient Login & Registration (`/login/patient`):** Patient-only public registration (`POST /api/auth/register`) and login (`POST /api/auth/login`) with password visibility toggle and language preference (`en`, `si`, `ta`).
+- **Clinician Login (`/login/clinician`):** Login-only portal; public clinician registration is disabled (`403` on escalation; provisioned via CLI `Backend/scripts/create-clinician.js`).
+- **Strict Role Enforcement:** Bidirectional portal-mismatch rejection (`validatePortalLoginRole`), signed JWT role/expiration checks, and direct-URL cross-role route guards (`/patient/dashboard` vs `/clinician/dashboard`).
 
-### Use cases
+### Cognitive, Drawing, Speech & Physical Examination Modules
+- **Patient Intake:** Age and explicit consent required (`screening_patient_profiles`), optional demographics/history.
+- **Immediate Memory (`memory`):** Timed 5-word memorization and free recall.
+- **Delayed Memory (`delayed_memory`):** Delayed recall of the 5-word list, tracking intrusions and skips.
+- **Attention (`attention`):** 10-round target/distractor reaction-time task.
+- **Digit Span (`digit_span`):** Forward and backward digit sequence trials with per-trial skip.
+- **Picture Recognition (`picture_recognition`):** Timed visual card memorization and recognition (true/false positives).
+- **Pattern Recognition (`pattern_recognition`):** 4 sequence/pattern reasoning questions.
+- **Orientation (`orientation`):** Year, month, date (validated against local assessment date), and location.
+- **Language (`language`):** Sentence recall and animal naming fluency (kept as unscored descriptive observations).
+- **Clock Drawing (`clock_drawing`):** HTML5 canvas drawing analyzed by Python `Pillow` (`Backend/ml/analyze_drawing.py`) for circularity, quadrant balance, and completeness (or optional skip).
+- **Voice & Speech Assessment (`voice`):** Live browser microphone recording (`MediaRecorder`) or WAV/audio file upload (`POST /api/audio/upload`), offline `faster-whisper-base` transcription, 44-feature acoustic extraction, quality reliability gating, and experimental DementiaNet classification (`dementianet-acoustic-v1.0.0`).
+- **Optional Physical Examination (`physical_examination`):** Attendant- or clinician-administered in-person **Sensory Response** (body region, method, response, notes) and **Reflex** (site, Left/Right/Both side, response, notes) observations, or optional skip. Never alters cognitive scores or speech predictions.
+- **Optional Brain Imaging Upload & Experimental MRI Analysis:** Validates `.nii`, `.nii.gz`, `.dcm`, `.zip` uploads (`brain_imaging_scans`) and runs SHA-256-verified experimental structural T1-weighted MRI inference (`radiata-oasis-mri-v1.0.0`, `volumetric_logreg`) returning an experimental research label and uncalibrated relative scores. Brain CT AI inference remains explicitly `unavailable` because no authorized labelled brain CT dementia dataset is available.
 
-- University project demonstration and viva presentation.
-- Local evaluation of frontend, backend, database, and Python integration.
-- Research software mechanics using clearly marked synthetic fixtures.
-- Development of future authorized MindScan-labelled datasets.
-- Audit and reproducibility work on the isolated SATURN experiment.
+### Dashboards, History, Reviews & Reporting
+- **Unified Assessment Report (`MultimodalSummary.jsx`):** Displays Assessment Performance Score (`XX/100`), Assessment Completeness (`%`), Experimental Speech Model Prediction (`Dementia` / `Non-dementia` / `Inconclusive` / `Model unavailable`), uncalibrated decimal scores, threshold notice, individual tasks, recommendations, and non-diagnostic disclaimers.
+- **Patient Dashboard (`PatientDashboard.jsx`):** Active screening resume, longitudinal Assessment History, inline `View Summary`, Notifications, and PDF download (`GET /api/screening/:id/report.pdf`).
+- **Clinician Dashboard (`ClinicianDashboard.jsx`):** Assigned-patient-only screening list, search & status filters (`all`, `recent`, `incomplete`, `pending_review`), immutable patient response view, clinician review submission (`POST /api/clinician/screenings/:id/review`), and assigned PDF download.
 
-### Scope boundary
+---
 
-The current application does not claim:
+## 3. Technology Stack
 
-- a clinically validated dementia probability;
-- a conversion from MindScan task scores to MMSE, MoCA, CDR, or diagnosis;
-- compatibility between SATURN/OASIS-style fields and live MindScan tasks;
-- a trained dementia classifier from the local audio directory;
-- multimodal fusion of cognitive and speech outputs;
-- clinical calibration, prospective validation, fairness validation, or
-  deployment readiness.
+| Layer | Technologies Used | Purpose in Project |
+|---|---|---|
+| **Frontend** | React `19.2.8`, Vite `8.3.0`, History API (`authRouting.js`), Fetch / XHR | Role-based portals, interactive cognitive/drawing/voice UI, progress tracking, dashboards |
+| **Backend** | Node.js, Express `4.22.3`, ESM modules | REST APIs, validation, scoring aggregation, subprocess orchestration, pure Node PDF 1.4 builder |
+| **Database** | PostgreSQL (`pg` `8.23.0`), Neon PostgreSQL (TLS) | Persistent users, sessions, task responses (`JSONB`), results, reviews, assignments, notifications |
+| **Authentication & Security** | `bcrypt` `6.0.0`, `jsonwebtoken` `9.0.3`, `cors` `2.8.6`, custom `securityMiddleware.js` | Password hashing, 1-day signed JWTs, RBAC, rate limiting, security headers |
+| **Python Audio & ML** | Python `3.14` (`.venv-audio`), `faster-whisper` `1.2.1`, `av` `19.0.2`, `scipy` `1.18.1`, `numpy` `2.5.5`, `scikit-learn` `1.9.1`, `joblib` `1.6.0`, `pillow` `13.0.0` | Audio decoding, offline transcription, 44 acoustic features, clock-drawing CV analysis, DementiaNet PoC inference |
+| **Deployment / Tooling** | `Dockerfile`s, `docker-compose.yml`, `dotenv` `17.4.2`, Node built-in test runner, Python `unittest` | Container definitions, env management, automated Backend/Frontend/Python test suites |
 
-## Features and scope
+---
 
-### Implemented
+## 4. System Architecture
 
-| Capability | Implementation status |
-| --- | --- |
-| Account registration and login | Implemented with bcrypt password hashing and JWT authentication |
-| Protected assessment routes | Implemented; assessment reads and writes are scoped to the authenticated account |
-| Patient/intake profile | Implemented; age and consent are required, other fields are optional |
-| Memory recall task | Implemented; unique correctly recalled words are counted |
-| Attention task | Implemented; correct, incorrect, missed, and reaction-time measurements are stored |
-| Orientation task | Implemented; server-side scoring uses the supplied local assessment date |
-| Language fluency task | Implemented; sentence character count and list-response count are retained |
-| Optional motor tapping task | Implemented as an exploratory measurement; not part of the cognitive model contract |
-| Optional clinician observation form | Implemented as separately recorded observations |
-| Cognitive task-performance score | Implemented as the unweighted mean of measured memory, attention, and orientation percentages |
-| Simulated report percentage | Implemented for demonstration only; `100 - cognitive task score`, clamped to 0–100, and clearly labelled as non-clinical |
-| Consent-driven audio upload | Implemented with MIME/signature checks, size limits, temporary files, and cleanup |
-| Offline faster-whisper transcription | Implemented when the optional audio environment and cached model are available |
-| Deterministic speech observations | Implemented from transcript text and valid timing metadata |
-| Research-model inference | Implemented through the guarded Python bundle contract when explicitly configured |
-| Assessment persistence/history | Implemented in PostgreSQL, including task responses and safe result JSON |
-| Frontend report visualization | Implemented; task scores, speech observations, model outputs, and simulated output remain separate |
-| Synthetic research bundle | Retained under `artifacts/models/synthetic-research/`; not a clinical model |
-| SATURN baseline | Retained under `research-data/saturn_dryad_2025/`; isolated from the live schema |
-
-### Experimental or unavailable
-
-- **Cognitive research inference** is unavailable by default unless a compatible
-  versioned bundle is configured with `MINDSCAN_MODEL_DIR` and
-  `MINDSCAN_MODEL_VERSION`.
-- The retained synthetic bundle can be used for controlled local mechanics
-  demonstrations. Its classes are simulated performance groups, not diagnoses.
-- **Speech classification** is unavailable unless a separately authorized,
-  compatible speech bundle is configured. The current audio path primarily
-  transcribes and extracts descriptive measurements.
-- `/api/ai/analyze` intentionally returns unavailable because the heuristic
-  ensemble is not clinically validated.
-- SATURN and the legacy OASIS-style artifacts are not compatible with live
-  MindScan inference.
-- Multimodal fusion is a design boundary only; there is no fusion endpoint or
-  fusion model.
-
-## Technology stack
-
-| Layer | Technology verified in this repository |
-| --- | --- |
-| Frontend | React `19.2.8`, Vite `8.3.0`, browser Fetch API |
-| Frontend quality | ESLint `10.10.0`, Node built-in test runner |
-| Backend | Node.js, Express `4.22.3`, ESM modules |
-| Authentication | `bcrypt` `6.0.0`, `jsonwebtoken` `9.0.3` |
-| HTTP/integration | `axios` `1.20.0`, Express middleware, JSON APIs |
-| Database | PostgreSQL via `pg` `8.23.0`; numbered SQL migrations |
-| Research ML | Python, pandas `3.0.6`, NumPy `2.5.3`, scikit-learn `1.9.1`, joblib `1.6.0` |
-| Cognitive models | scikit-learn `LogisticRegression` and `RandomForestClassifier` |
-| Speech transcription | `faster-whisper` `1.2.1`, optional dedicated Python environment |
-| Build/development | npm lockfiles, Vite build, nodemon, PowerShell setup script |
-| Documented deployment | Render backend, Neon PostgreSQL, Vercel frontend |
-
-The repository also contains `cors` and `dotenv` backend dependencies. Python
-versions are checked by `setup.ps1`; the current setup requires Python 3.11 or
-newer for the project environment. The installed research metadata records
-Python 3.14 for the retained SATURN run.
-
-## System architecture
+### High-Level Architecture
 
 ```mermaid
 flowchart LR
-    U[Participant or demonstrator] --> F[React + Vite frontend]
-    F -->|JWT login| A[Express authentication routes]
-    F -->|Authenticated JSON requests| S[Express screening routes]
-    S --> C[Screening controllers and services]
-    C --> P[(PostgreSQL)]
-    C --> X[Server-side feature adapter]
-    X --> T[Cognitive task features]
-    X --> V[Speech/timing features]
-    T --> R[Python inference subprocess]
-    V --> Q[Optional speech inference subprocess]
-    R --> B[Versioned cognitive model bundle]
-    Q --> B2[Optional versioned speech bundle]
-    R --> O[Structured research-only output]
-    Q --> O2[Structured speech output]
-    O --> REP[Assessment report and history]
-    O2 --> REP
-    F -->|Temporary audio upload with consent| AU[Audio route]
-    AU --> TMP[Temporary server file]
-    TMP --> W[faster-whisper transcription]
-    W --> V
-    TMP -. deleted after processing .-> DEL[Cleanup]
+    U["Browser (React 19 + Vite)"] -->|"HTTPS / JSON + Bearer JWT"| API["Node.js + Express API (:3001)"]
+    API -->|"Parameterized SQL (pg + TLS)"| DB[("Neon PostgreSQL")]
+    API -->|"Temp audio file (.venv-audio)"| PY["Python ML & Audio Pipeline"]
+    PY -->|"faster-whisper + 44 Acoustic Features"| POC["dementianet-acoustic-v1.0.0 (SHA-256)"]
+    API -->|"Drawing PNG -> Pillow CV"| IMG["analyze_drawing.py"]
+    API -->|"Imaging Upload -> imagingService.js"| IMP["imaging_pipeline.py (MRI Validation & 27 Features)"]
+    IMP -->|"Structural MRI only (CT = unavailable)"| MRIC["radiata-oasis-mri-v1.0.0 (volumetric_logreg)"]
+    API -->|"Pure Node PDF 1.4"| PDF["mindscan-report-<id>.pdf"]
 ```
 
-There is no Python HTTP server. Node invokes `predict.py` through a subprocess
-with JSON on stdin, a ten-second cognitive inference timeout, bounded output,
-and non-sensitive error handling. The audio transcription subprocess has its
-own timeout and temporary-file lifecycle.
+### Experimental Brain MRI Upload & Inference Flow (Isolated from Cognitive Scoring & Speech)
 
-## Assessment workflow and data flow
-
-1. The user registers or logs in through `/api/auth`.
-2. The frontend starts an assessment with an intake profile and consent.
-3. The backend creates an owned screening session and patient profile.
-4. Required tasks are completed in the browser:
-   memory, attention, orientation, and language.
-5. The frontend submits each response to `/api/screening/:id/response`.
-6. The backend validates the response, calculates supported task scores, and
-   stores the response JSON, score, and reaction-time value.
-7. Optional audio is uploaded only after authentication and consent. It is
-   validated, written to a private temporary directory, transcribed, analysed,
-   and deleted after processing.
-8. `/api/screening/:id/result` loads the owned assessment and derives
-   allowlisted cognitive and speech feature records on the server.
-9. The cognitive and speech model paths are invoked independently. Missing
-   models stay unavailable; outputs are never fused or converted into a
-   clinical risk value.
-10. The result is persisted in `screening_results` and rendered by the report
-    page and history view.
-
-### Cognitive task scoring
-
-The stored `cognitiveTaskScore.index_percent` is the arithmetic mean of the
-available memory, attention, and orientation task percentages:
-
-```text
-index_percent = mean(measured memory %, attention %, orientation %)
+```mermaid
+flowchart TD
+    M1["MRI / CT Upload Component (Frontend)"] -->|"POST /api/imaging/upload (JWT)"| M2["Node.js Imaging Service (imagingController.js / imagingService.js)"]
+    M2 -->|"Private Temp Scan File"| M3["Python Imaging Pipeline (imaging_pipeline.py)"]
+    M3 -->|"NIfTI/DICOM Validation & 27 3D Features"| M4{"Modality == 'mri' AND valid 3D NIfTI?"}
+    M4 -->|"Yes + SHA-256 Verified"| M5["volumetric_logreg.joblib -> Experimental Output (cognitively_normal / Alzheimers_disease)"]
+    M4 -->|"CT Scan"| M6["CT AI Inference Unavailable (No Authorized Labelled CT Dataset)"]
+    M4 -->|"Corrupt / 2D / Invalid"| M7["400 Rejected (No Persistence)"]
+    M5 --> M8["Persist Metadata & Experimental Output to brain_imaging_scans (Neon PostgreSQL)"]
+    M6 --> M8
+    M8 --> M9["PDF Report Section 7 (BRAIN IMAGING) & MultimodalSummary.jsx (Never alters Cognitive Score or Speech Label)"]
 ```
 
-Language is not included in this composite because the current language task
-does not have a validated numeric scoring rule. The score is a task-performance
-summary, not a validated cognitive instrument.
+### Audio & Experimental Speech Classification Flow
 
-The report also contains the educational-only presentation mapping:
-
-```text
-simulatedProbability = clamp(100 - cognitiveTaskPerformanceScore, 0, 100)
+```mermaid
+flowchart TD
+    A["Browser Mic (WebM/Ogg) or WAV Upload"] -->|"POST /api/audio/upload (JWT)"| B["audioAgentController.js (12 MB + Magic-Byte Check)"]
+    B -->|"Private Temp Dir"| C["transcribe_audio.py (.venv-audio)"]
+    C -->|"PyAV Decode -> Temp 16k WAV"| D["faster-whisper-base + extract_speech_intelligence()"]
+    D --> E{"language == 'en' AND quality_reliable?"}
+    E -->|"Yes + 44 finite features + SHA-256 OK"| F["logistic_regression.joblib -> Dementia / Non-dementia"]
+    E -->|"No (non-English / poor quality / missing)"| G["Inconclusive (No Fabrication)"]
+    E -->|"Bundle missing / tampered"| H["Model unavailable"]
+    F --> I["Return JSON & Delete Temp Files"]
+    G --> I
+    H --> I
 ```
 
-For example, `16.65/100` displays as `83.35%`. This value is visually separate
-from model output and includes the disclaimer:
+### Authentication & Role Routing Flow
 
-> Illustrative score-to-percentage mapping for an educational demonstration.
-> Not a clinically validated probability or diagnosis.
-
-It must not be interpreted as a dementia probability.
-
-## Data and field reference
-
-### Intake fields
-
-| Field | Type | Meaning/source | Storage/model use |
-| --- | --- | --- | --- |
-| `patientIdentifier` | string, optional | Study identifier supplied by the user | Stored profile context; never a model feature |
-| `age` | integer, 1–120 | Required intake age | Stored profile; `age_years` may be a cognitive-model feature |
-| `sex` | category, optional | `female`, `male`, `intersex`, `self_described`, or `prefer_not_to_say` | Stored profile; `sex` may be a cognitive-model feature |
-| `educationYears` | number, 0–40, optional | Intake education duration | Stored profile; `education_years` may be a cognitive-model feature |
-| `handedness` | category, optional | `right`, `left`, `ambidextrous`, or `unknown` | Stored profile; `handedness` may be a cognitive-model feature |
-| `socioeconomicStatus` | number, 1–5, optional | Intake context | Stored profile; not in the current model feature schema |
-| `medicalHistory` | string, optional | User-entered context | Stored profile; not a model feature |
-| `medications` | string, optional | User-entered context | Stored profile; not a model feature |
-| `reportedSymptoms` | string, optional | User-entered context | Stored profile; not a model feature |
-| `symptomOnset` | string, optional | User-entered context | Stored profile; not a model feature |
-| `functionalChanges` | string, optional | User-entered context | Stored profile; not a model feature |
-| `familyHistory` | string, optional | User-entered context | Stored profile; not a model feature |
-| `consent` | boolean | Required consent for research assessment storage | Stored as `consent_at`; never a model feature |
-
-MMSE, MoCA, CDR, MRI values, diagnosis fields, and patient identifiers are not
-collected as live model inputs. The clinician form may display MMSE/CDR fields
-for separately recorded observations, but they are not inferred from task
-performance and are not in the MindScan model schema.
-
-### Cognitive task inputs and derived values
-
-| Task | Collected inputs | Derived fields | Raw/derived/model role |
-| --- | --- | --- | --- |
-| Memory recall | `wordsShown`, `wordsRecalled` | Correct unique words, presented count, errors, accuracy ratio | Raw response plus derived cognitive model features |
-| Attention | `correct`, `wrong`, `missed`, `reactionTimes` | Error count, accuracy ratio, mean reaction time | Raw response plus derived cognitive model features |
-| Orientation | Year, month, date, place, assessment date | Server-scored correct count, scored count, accuracy ratio | Raw response plus derived cognitive model features |
-| Language fluency | Sentence response and animal/list response | Sentence character count, list-response count | Raw response plus two optional cognitive model features; no language task score |
-| Motor tapping | Hand and event timestamps/offsets | Tapping count/timing measurements | Exploratory persisted observation; not in the cognitive model |
-| Clinician observation | Observation statuses, notes, optional clinical measurements | Validated observation record | Separate clinician-entered record; not a model feature |
-
-### Versioned cognitive model schema: 19 features
-
-The authoritative schema is
-[`Backend/ml/feature_schema.json`](./Backend/ml/feature_schema.json). The
-current cognitive contract contains 15 task-derived fields and 4 intake
-fields:
-
-| Feature | Type/unit | Meaning |
-| --- | --- | --- |
-| `memory_recall_count` | number/words | Unique correctly recalled presented words |
-| `memory_presented_count` | number/words | Unique words shown |
-| `memory_error_count` | number/words | Presented words minus unique correct recalls |
-| `memory_accuracy_ratio` | number/ratio | Correct recalls divided by presented words |
-| `attention_correct_count` | number/trials | Correct attention responses |
-| `attention_incorrect_count` | number/trials | Incorrect attention responses |
-| `attention_missed_count` | number/trials | Missed attention responses |
-| `attention_error_count` | number/trials | Incorrect plus missed attention responses |
-| `attention_accuracy_ratio` | number/ratio | Correct divided by correct + incorrect + missed |
-| `attention_mean_reaction_time_ms` | number/ms | Mean valid browser reaction time |
-| `orientation_correct_count` | number/items | Correct server-scored orientation items |
-| `orientation_scored_count` | number/items | Orientation items actually scored |
-| `orientation_accuracy_ratio` | number/ratio | Correct orientation items divided by scored items |
-| `language_sentence_character_count` | number/characters | Trimmed sentence response length |
-| `language_list_response_count` | number/items | Parsed list-response item count |
-| `age_years` | number/years | Consented intake age |
-| `education_years` | number/years | Optional intake education |
-| `sex` | category | Optional intake category |
-| `handedness` | category | Intake handedness category |
-
-Feature records are created by
-[`Backend/services/mlService.js`](./Backend/services/mlService.js), not accepted
-from the prediction caller. Missing values remain missing; the model pipeline
-handles them only if the selected bundle declares compatible preprocessing.
-
-### Versioned speech feature schema: 14 features
-
-Speech is a separate modality. The live speech contract contains:
-
-| Feature | Type/unit | Source/meaning |
-| --- | --- | --- |
-| `voice_audio_duration_seconds` | number/seconds | Decoded audio duration |
-| `voice_speaking_duration_seconds` | number/seconds | Union of valid transcription segment intervals |
-| `voice_transcript_word_count` | number/words | Unicode-tokenized transcript words |
-| `voice_transcript_character_count` | number/characters | Trimmed transcript length |
-| `voice_speech_rate_words_per_minute` | number/WPM | Word count divided by valid timed speech duration |
-| `voice_pause_count` | number/gaps | Positive gaps between valid segments |
-| `voice_mean_pause_seconds` | number/seconds | Mean positive segment gap |
-| `voice_maximum_pause_seconds` | number/seconds | Largest positive segment gap |
-| `voice_estimated_non_speech_ratio` | number/ratio | Duration minus timed speech divided by duration |
-| `voice_filler_word_count` | number/tokens | English filler-token count |
-| `voice_filler_word_ratio_percent` | number/percent | English filler count divided by word count |
-| `voice_adjacent_repeated_word_count` | number/tokens | Case-folded adjacent repeated words |
-| `voice_lexical_diversity` | number/ratio | Unique transcript tokens divided by total tokens |
-| `voice_mean_sentence_length_words` | number/words | Mean punctuation-delimited sentence length |
-
-Pitch means and standard deviations are explicitly unavailable in the current
-transcription path.
-
-### Prediction response fields
-
-Successful research inference has the following shape:
-
-```json
-{
-  "status": "available_research_only",
-  "model_version": "mindscan-synthetic-v1.0.0",
-  "model_name": "random_forest",
-  "modality": "cognitive_tasks",
-  "labels": [
-    "synthetic_lower_performance",
-    "synthetic_higher_performance"
-  ],
-  "output": {
-    "predicted_label": "synthetic_higher_performance",
-    "class_scores": {
-      "synthetic_lower_performance": 0.31,
-      "synthetic_higher_performance": 0.69
-    },
-    "scores_are_calibrated_probabilities": false
-  },
-  "evaluation_status": "held_out_test_evaluated",
-  "synthetic_demo": true,
-  "clinical_validity": false
-}
+```mermaid
+flowchart LR
+    L["/login (Portal Selection)"] --> LP["/login/patient (Login + Register)"]
+    L --> LC["/login/clinician (Login Only)"]
+    LP -->|"POST /api/auth/login -> role === 'patient'"| PD["/patient/dashboard"]
+    LC -->|"POST /api/auth/login -> role === 'clinician'"| CD["/clinician/dashboard"]
+    LP -->|"Clinician creds"| M1["Rejected: Use Clinician Portal"]
+    LC -->|"Patient creds"| M2["Rejected: Use Patient Login"]
 ```
 
-The example is sanitized and illustrative; class scores are model outputs, not
-clinical probabilities. Unavailable responses include `status: "unavailable"`,
-`code`, `reason`, `missing_inputs`, `model_version`, and `output: null`.
-Invalid feature requests return `status: "invalid_input"`. Python inference
-also validates bundle format, schema version, metadata version, feature
-names/types/ranges/categories, labels, model-file hashes, and provenance.
+---
 
-### Persisted assessment result fields
-
-The PostgreSQL result record contains:
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `screening_id` | integer | Unique owned screening session |
-| `memory_score` | numeric | Stored task score |
-| `attention_score` | numeric | Stored task score |
-| `language_score` | numeric/null | Legacy/result field; current language task has no validated score |
-| `orientation_score` | numeric | Stored task score |
-| `overall_score` | numeric | Current descriptive cognitive score where available |
-| `risk_level`, `risk_score`, `probability` | legacy/result fields | Not populated with fabricated clinical inference |
-| `task_scores` | JSONB | Task scores, measurements, safe model status/output, and report metadata |
-| `recommendation` | text | Research/report recommendation text |
-| `flags` | JSONB | Assessment notes and flags |
-| timestamps | timestamp | Creation and session timing |
-
-Raw uploaded audio is not persisted as an assessment response. The current
-saved voice payload contains allowlisted observations rather than transcript
-text.
-
-## Datasets and artifacts
-
-### Local OASIS-style tabular artifact
-
-`artifacts/models/tabular/baseline_v1/metadata.json` describes a legacy
-Logistic Regression artifact trained from a local
-`Backend/data/dementia_dataset.csv`-style cohort:
-
-- 373 rows in the recorded train/test metadata: 275 train and 98 test.
-- 12 input fields: `Visit`, `MR Delay`, `M/F`, `Hand`, `Age`, `EDUC`, `SES`,
-  `MMSE`, `CDR`, `eTIV`, `nWBV`, and `ASF`.
-- Target mapping: `Nondemented -> 0`; `Demented` and `Converted -> 1`.
-- Recorded metadata metrics: accuracy `0.9388`, weighted F1 `0.9379`, binary F1
-  `0.9118`, and ROC-AUC `0.9691` on its recorded test partition.
-
-This artifact is **not compatible** with the current MindScan task schema. It
-requires MMSE/CDR and MRI-derived fields that the live app does not collect,
-and its dataset provenance and use authorization are not established in this
-repository. The backend therefore reports an explicit legacy-unavailable
-explanation instead of renaming or fabricating fields.
-
-### SATURN Dryad research baseline
-
-The isolated SATURN experiment is stored under
-[`research-data/saturn_dryad_2025/`](./research-data/saturn_dryad_2025/).
-Its source is the Dryad release identified by DOI
-[`10.5061/dryad.j9kd51cq4`](https://doi.org/10.5061/dryad.j9kd51cq4), version 3.
-The source audit describes 1,033 rows and 1,033 unique de-identified
-participants. The final modeling subset contains 144 SATURN rows/participants
-after selecting `INDEX_EVENT == SATURN` and excluding rows missing
-`SATURN_TOTAL_SCORE` or the target.
-
-The target is `AUTO_DEMENTIA_INITIAL_VISIT_1yes_0no`, an automated retrospective
-ICD-code proxy:
-
-- `0`: no automated dementia ICD code at initial visit;
-- `1`: automated dementia ICD code at initial visit.
-
-It is not an independently adjudicated diagnosis. The final model uses 44
-SATURN score, timing, reading-speed, motor-speed, and total-time features. It
-excludes the target, Alzheimer’s target field, `INDEX_EVENT`, `PATIENT`,
-`SATURN_TOTAL_SCORE`, and `SATURN_POSSIBLE_SCORE`. The feature list is recorded
-in [`feature_schema.json`](./research-data/saturn_dryad_2025/feature_schema.json)
-and the split hashes are recorded in `metadata.json` and
-`split_manifest.json`.
-
-| Partition | Participants/rows | Class 0 | Class 1 |
-| --- | ---: | ---: | ---: |
-| Train | 86 | 58 | 28 |
-| Validation | 29 | 17 | 12 |
-| Test | 29 | 19 | 10 |
-
-Preprocessing is fitted on training data only. The final test metrics are:
-
-| Model | Accuracy | Sensitivity | Specificity | Precision | F1 | ROC-AUC |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Logistic Regression | 0.759 | 0.700 | 0.789 | 0.636 | 0.667 | 0.774 |
-| Random Forest | 0.724 | 0.700 | 0.737 | 0.583 | 0.636 | 0.847 |
-
-The 95% Wilson intervals in the experiment report are sampling-uncertainty
-intervals for the small held-out set; they do not establish clinical validity.
-SATURN is a different assessment protocol and is never connected to live
-MindScan inference.
-
-### Retained synthetic MindScan bundle
-
-The retained synthetic experiment is under
-[`artifacts/models/synthetic-research/`](./artifacts/models/synthetic-research/):
-
-- model version: `mindscan-synthetic-v1.0.0`;
-- 160 synthetic participants/rows;
-- 19 cognitive-task/intake features;
-- labels: `synthetic_lower_performance` and
-  `synthetic_higher_performance`;
-- 96 train, 32 validation, and 32 test participants;
-- participant-grouped `GroupShuffleSplit`, outer seed 42 and inner seed 43;
-- Logistic Regression and Random Forest candidate pipelines;
-- selected model by validation balanced accuracy: Random Forest.
-
-The generator seed is `20261022`. Labels are generated from a noisy latent
-simulation involving age, education, and feature noise. Records are explicitly
-marked synthetic; no patient records, clinical diagnoses, MMSE/MoCA cutoffs, or
-MRI values are used.
-
-Held-out synthetic-only metrics:
-
-| Model | Accuracy | Balanced accuracy | Macro precision | Macro recall | Macro F1 | ROC-AUC |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Logistic Regression | 0.625 | 0.619 | 0.619 | 0.619 | 0.619 | 0.611 |
-| Random Forest | 0.625 | 0.643 | 0.650 | 0.643 | 0.624 | 0.681 |
-
-These values measure recovery of a software simulation rule only. They are not
-dementia-detection accuracy, clinical performance, calibrated probabilities,
-or evidence of generalization to MindScan users. The production environment
-guard rejects a synthetic cognitive bundle unless a separate reviewed
-demo-deployment setting is present.
-
-### Local audio corpus
-
-`artifacts/models/audio/baseline_v1/audio_metadata.json` records 131 audio
-files, 84 subject-level folder keys, and no verified subject-level diagnostic
-labels. The files have duration and sample-rate summaries, but the project
-does not establish authorized participant linkage or a supervised dementia
-target. The audio path therefore performs transcription and descriptive
-feature extraction; it does not claim a trained dementia audio classifier.
-
-## Machine-learning algorithms
-
-### Guarded research trainer
-
-[`Backend/ml/train_model.py`](./Backend/ml/train_model.py) trains one modality
-at a time using:
-
-| Model | scikit-learn implementation | Preprocessing |
-| --- | --- | --- |
-| Logistic Regression | `sklearn.linear_model.LogisticRegression` | Numeric median imputation with missing indicators and standard scaling; categorical most-frequent imputation and one-hot encoding; `class_weight="balanced"` |
-| Random Forest | `sklearn.ensemble.RandomForestClassifier` | Numeric median imputation with missing indicators; categorical most-frequent imputation and one-hot encoding; `n_estimators=300`, `class_weight="balanced"`, `random_state=42` |
-
-Training requires an explicit CSV, provenance manifest, checksum, authorization
-assertions, target, participant/group column, modality, feature list, model
-version, and output directory. It fails closed when those inputs are absent.
-`GroupShuffleSplit` keeps participants disjoint. The preprocessing pipeline is
-fitted only on the training partition and then applied to validation/test.
-
-### Model artifact and inference implementation
-
-| Model family | Implementation/artifact | Input | Target/output | Evaluation |
-| --- | --- | --- | --- | --- |
-| MindScan Logistic Regression | `train_model.py`; `artifacts/models/synthetic-research/bundle/logistic_regression.joblib` | 19 cognitive features | Two synthetic performance classes | 32 held-out synthetic test participants; metrics above |
-| MindScan Random Forest | `train_model.py`; `artifacts/models/synthetic-research/bundle/random_forest.joblib` | Same 19 features | Same two synthetic performance classes | Same participant-disjoint held-out test |
-| SATURN Logistic Regression | `research-data/saturn_dryad_2025/train_saturn_baseline.py` and isolated joblib | 44 SATURN features | ICD-code proxy 0/1 | 29 held-out SATURN participants |
-| SATURN Random Forest | Same isolated research pipeline | Same 44 SATURN features | Same ICD-code proxy 0/1 | Same held-out SATURN participants |
-| Legacy Logistic Regression | `artifacts/models/tabular/baseline_v1/` metadata | 12 OASIS-style clinical/MRI fields | Nondemented vs Demented/Converted | Historical metadata only; not live-compatible |
-
-The backend calls [`Backend/ml/predict.py`](./Backend/ml/predict.py) with:
-
-```text
-python Backend/ml/predict.py `
-  --artifact-dir <bundle-directory> `
-  --model-version <exact-version> `
-  --model-name logistic_regression
-```
-
-JSON is written to stdin and a single structured JSON response is read from
-stdout. Only trusted, reviewed joblib artifacts should be loaded: joblib/pickle
-files can execute code during deserialization. SHA-256 checks detect mismatch,
-but do not establish trust or data authorization.
-
-## Speech analysis
-
-### Transcription
-
-The optional audio route accepts WAV, WebM, MP3, MP4, and Ogg content up to
-12 MB. It validates MIME type, file signature, decodability, duration, and
-silence/malformed-audio conditions before invoking the local
-`faster-whisper-base` model. The uploaded file is stored in a private temporary
-directory and removed in a `finally` cleanup path.
-
-The transcription response includes detected language, transcript segments,
-timings, duration, and provenance flags. The frontend can show a transcript for
-review; the saved assessment uses an allowlisted minimized payload and does not
-retain raw audio.
-
-### Deterministic transcript observations
-
-[`Backend/ml/transcript_analysis.py`](./Backend/ml/transcript_analysis.py)
-computes literal, non-diagnostic observations:
-
-- Unicode token count and sentence count;
-- average words per sentence;
-- English filler counts for `uh`, `um`, `erm`, `er`, `ah`, and `hmm`;
-- adjacent repeated-word count;
-- repeated short phrases of two to four tokens;
-- unique-word ratio;
-- selected self-correction markers such as “sorry” and “no wait”;
-- selected vague-expression counts such as “thing”, “something”, and “stuff”.
-
-English-specific fields are unavailable rather than zero for other languages.
-Short and empty transcripts are explicit states. No semantic picture scoring,
-impairment threshold, or diagnosis is inferred.
-
-### Timing and lexical features
-
-[`Backend/ml/speech_features.py`](./Backend/ml/speech_features.py) additionally
-computes transcript characters, valid timed speaking duration, speech rate when
-at least two seconds of valid timed speech are available, positive segment
-pauses, estimated non-speech ratio from segment timing, filler counts, lexical
-diversity, and mean sentence length. The non-speech ratio is not waveform
-silence detection. Pitch features are explicitly unavailable because no
-acoustic pitch extractor is installed.
-
-Speech observations are separate from cognitive-task scoring and are not used
-as a dementia classifier by the current application.
-
-## Model inference and API contract
-
-All screening, result, history, audio, and model routes that access an account
-require a JWT bearer token. Authentication endpoints are public.
-
-### Route summary
-
-| Method | Route | Authentication | Purpose |
-| --- | --- | --- | --- |
-| `POST` | `/api/auth/register` | No | Register an account |
-| `POST` | `/api/auth/login` | No | Authenticate and receive JWT |
-| `POST` | `/api/screening/start` | Yes | Create an owned assessment |
-| `GET` | `/api/screening/active` | Yes | Load the active assessment |
-| `GET` | `/api/screening/:id` | Yes | Load owned assessment details |
-| `PUT` | `/api/screening/:id/patient` | Yes | Update validated intake profile |
-| `POST` | `/api/screening/:id/response` | Yes | Save one task response |
-| `GET` | `/api/screening/:id/result` | Yes | Complete/report the owned assessment |
-| `DELETE` | `/api/screening/:id` | Yes | Delete owned assessment |
-| `GET` | `/api/results/history` | Yes | Load authenticated history |
-| `POST` | `/api/ml/predict` | Yes | Run guarded cognitive inference |
-| `POST` | `/api/audio/upload` | Yes | Upload and process temporary audio |
-| `GET` | `/api/audio/analysis` | Yes | Explicit unavailable audio classifier response |
-| `POST` | `/api/ai/analyze` | Yes | Explicit unavailable heuristic-analysis response |
-| `GET` | `/api/ml/demo-report` | No | Development-only deterministic UI demo when enabled |
-| `GET` | `/api/health` | No | API/database health check |
-
-### Start a screening
-
-```http
-POST /api/screening/start
-Authorization: Bearer <jwt>
-Content-Type: application/json
-```
-
-```json
-{
-  "patientProfile": {
-    "age": 64,
-    "sex": "prefer_not_to_say",
-    "educationYears": 13,
-    "handedness": "right",
-    "consent": true
-  }
-}
-```
-
-### Save a task response
-
-```http
-POST /api/screening/123/response
-Authorization: Bearer <jwt>
-Content-Type: application/json
-```
-
-```json
-{
-  "taskType": "memory",
-  "responseData": {
-    "wordsShown": ["APPLE", "RIVER", "WINDOW", "MANGO", "GARDEN"],
-    "wordsRecalled": ["apple", "river"]
-  },
-  "reactionTime": null
-}
-```
-
-### Request a model prediction
-
-The caller cannot submit an arbitrary feature vector. The API accepts only the
-account-owned screening identifier:
-
-```http
-POST /api/ml/predict
-Authorization: Bearer <jwt>
-Content-Type: application/json
-```
-
-```json
-{ "screeningId": 123 }
-```
-
-Possible outcomes:
-
-- `200`: `available_research_only` with model version, class label, and
-  uncalibrated class scores;
-- `400`: `invalid_input` or incomplete required assessment;
-- `404`: assessment is not owned by or does not exist for the account;
-- `503`: model unavailable, missing, incompatible, timed out, or not configured.
-
-The result endpoint performs the same server-side feature derivation and
-persists the safe report output. Cognitive and speech calls use separate
-modality schemas and are never silently combined.
-
-## Architecture and design decisions
-
-### Separation of concerns
-
-- React owns interaction, task presentation, local timing, and report display.
-- Express owns authentication, authorization, validation, persistence, feature
-  derivation, and API error semantics.
-- Python owns versioned research bundle validation, preprocessing-compatible
-  inference, and model artifact loading.
-- PostgreSQL owns account, session, profile, task-response, and result storage.
-
-### Server-derived features
-
-The model endpoint deliberately rejects caller-supplied features. It rebuilds
-the feature record from saved responses and the owned intake profile. This
-prevents the browser from changing the model input after the assessment is
-stored and keeps the model contract in one server-side adapter.
-
-### Fail-closed model loading
-
-The Python loader checks metadata format/schema version, requested version,
-modality, declared feature schema, labels, model file name, artifact checksum,
-source authorization fields, and model capabilities. Missing artifacts,
-missing required features, invalid categories/ranges, timeouts, malformed
-subprocess output, and incompatible bundles remain explicit unavailable states.
-
-### Model configuration
-
-The default artifact directory is the research path and no model version is
-configured by default. A deployment must explicitly set the exact artifact
-directory, version, and model name. A path containing `synthetic-research` is
-treated as an explicit synthetic research path; production rejects it unless a
-separately reviewed deployment setting is present. There is no silent fallback
-from a missing clinical bundle to a synthetic bundle.
-
-### Persistence and privacy
-
-Assessment queries are scoped to the authenticated user. Passwords are hashed.
-Temporary audio is removed after processing. The repository does not provide a
-complete privacy or regulatory compliance program; production still requires
-retention, deletion, access-control, TLS, secret-management, audit, and
-institutional review procedures.
-
-## Installation and execution
-
-The commands below are Windows PowerShell friendly and match the repository
-scripts.
+## 5. Installation and Setup (Windows)
 
 ### Prerequisites
+- Node.js `v20+` (verified `v24.21.0`) and `npm`
+- Python `3.11+` (verified `3.14`)
+- PostgreSQL (Neon PostgreSQL with TLS, or local PostgreSQL `15+`)
 
-- Windows PowerShell.
-- Node.js `20.19+` or `22.12+` (the setup script checks this).
-- npm.
-- PostgreSQL 15+ running as a Windows service for the full authenticated app.
-- Python 3.11+.
-- Optional: a cached `faster-whisper` model and audio environment for speech.
-
-### Clone/open the project
-
+### 1. Backend Setup
 ```powershell
-git clone https://github.com/Sunnyprabhakar-cmd/Dementia_Detection_Tool.git
-Set-Location .\Dementia_Detection_Tool
-```
-
-If the repository is already present:
-
-```powershell
-Set-Location "C:\Users\SONU\OneDrive\Desktop\Dimentia Detection"
-```
-
-### Automated local setup
-
-`setup.ps1` creates missing local environment files, preserves existing values,
-installs from lockfiles, checks/installs pinned research Python dependencies,
-ensures the local PostgreSQL database, and applies migrations:
-
-```powershell
-npm run setup
-```
-
-Do not run this against a production Neon database. The script does not print
-generated JWT secrets. Review the generated `Backend/.env` and
-`Frontend/.env.local` locally; neither should be committed.
-
-### Manual dependency setup
-
-```powershell
+cd D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Backend
 npm install
-npm --prefix Backend install
-npm --prefix Frontend install
-
-py -3.11 -m venv .venv
-& .\.venv\Scripts\python.exe -m pip install -r Backend\ml\requirements-training.txt
 ```
-
-The optional audio environment is separate:
-
-```powershell
-py -3.11 -m venv .venv-audio
-& .\.venv-audio\Scripts\python.exe -m pip install -r Backend\ml\requirements-audio.txt
-```
-
-If a local Whisper model is not cached, populate it deliberately on an
-internet-enabled development machine:
-
-```powershell
-& .\.venv-audio\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
-```
-
-### Environment files
-
-```powershell
-Copy-Item Backend\.env.example Backend\.env
-Copy-Item Frontend\.env.example Frontend\.env.local
-```
-
-Set at minimum for local development:
-
-```text
-# Backend/.env
+Copy `Backend/.env.example` to `Backend/.env` and set placeholders (never commit `Backend/.env`):
+```env
 NODE_ENV=development
 PORT=3001
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
-DB_NAME=mindscan
-JWT_SECRET=<local-only-random-secret>
+DATABASE_URL=postgresql://<user>:<password>@<host>/<db>?sslmode=require
+DATABASE_SSL_REJECT_UNAUTHORIZED=true
+JWT_SECRET=<strong-random-secret>
+MINDSCAN_DEMO_MODE=false
+PYTHON_EXECUTABLE=D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\.venv-audio\Scripts\python.exe
+```
 
-# Frontend/.env.local
+### 2. Database Connection & Migrations
+```powershell
+npm --prefix D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Backend run database:test
+npm --prefix D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Backend run migrate
+```
+
+### 3. Provision a Clinician Account (CLI Only)
+```powershell
+node D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Backend\scripts\create-clinician.js "Dr. Name" "clinician@example.com" "<min-8-char-password>"
+```
+
+### 4. Python `.venv-audio` Setup
+```powershell
+python -m venv D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\.venv-audio
+D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\.venv-audio\Scripts\python.exe -m pip install -r D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Backend\ml\requirements-audio.txt
+D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\.venv-audio\Scripts\python.exe -m pip install scikit-learn joblib pillow
+```
+- Trained speech PoC bundle expected at `artifacts/models/speech_poc/dementianet-acoustic-v1.0.0/`.
+- `faster-whisper-base` (`~145 MB`) downloads automatically on first transcription.
+
+### 5. Frontend Setup & Running the App
+```powershell
+cd D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Frontend
+npm install
+```
+Set `Frontend/.env`:
+```env
 VITE_API_URL=http://localhost:3001
 ```
-
-The frontend code reads `VITE_API_URL`. If a generated local environment file
-contains an older `VITE_API_BASE_URL` entry, add or rename the setting to
-`VITE_API_URL` before starting Vite.
-
-### Database
-
-For local development with individual PostgreSQL settings:
-
+Start Backend and Frontend in separate terminals:
 ```powershell
-npm run db:ensure
-npm run db:migrate
+npm --prefix D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Backend start
+npm --prefix D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\Frontend run dev -- --port 5173
 ```
 
-Or run migrations against an explicitly configured `DATABASE_URL`:
-
-```powershell
-npm --prefix Backend run migrate
-```
-
-The migration runner is checksum-aware and does not drop or truncate application
-tables. The main tables are `users`, `screening_sessions`,
-`screening_patient_profiles`, `task_responses`, and `screening_results`.
-
-### Start the application
-
-Start backend and frontend together:
-
-```powershell
-npm run dev
-```
-
-The default local URLs are:
-
-- frontend: `http://127.0.0.1:5173/`;
-- API: `http://localhost:3001`;
-- health: `http://localhost:3001/api/health`.
-
-To run them separately:
-
-```powershell
-npm --prefix Backend run dev
-npm --prefix Frontend run dev -- --host 127.0.0.1
-```
-
-### Optional local model configuration
-
-To use the retained synthetic bundle for an explicitly local research/demo
-configuration:
-
-```powershell
-$env:NODE_ENV = "development"
-$env:MINDSCAN_MODEL_DIR = (Resolve-Path .\artifacts\models\synthetic-research\bundle).Path
-$env:MINDSCAN_MODEL_VERSION = "mindscan-synthetic-v1.0.0"
-$env:MINDSCAN_MODEL_NAME = "random_forest"
-npm --prefix Backend run dev
-```
-
-Use `logistic_regression` for the alternate retained model. This is not a
-clinical model and must not be presented as a dementia probability.
-
-### Troubleshooting
-
-| Symptom | Checks |
-| --- | --- |
-| Frontend cannot start | Confirm `Frontend/.env.local` contains `VITE_API_URL` and restart Vite |
-| API returns 503 health | Confirm PostgreSQL is running, credentials are correct, and migrations have run |
-| API port is busy | Stop the specific process using port 3001 or set `PORT` before `npm run dev` |
-| Model is unavailable | Check exact `MINDSCAN_MODEL_DIR`, `MINDSCAN_MODEL_VERSION`, `MINDSCAN_MODEL_NAME`, metadata, hashes, and required feature coverage |
-| Audio transcription unavailable | Install `requirements-audio.txt`, configure `PYTHON_EXECUTABLE` if needed, and cache `faster-whisper-base` |
-| Audio upload rejected | Use a supported MIME/signature and a file no larger than 12 MB |
-| CORS failure | Set development `CORS_ORIGIN` to the exact frontend origin and restart the backend |
-
-## Environment variables
-
-Never copy real values into documentation or source control.
-
-### Backend
-
-| Variable | Required | Purpose/safe example |
-| --- | --- | --- |
-| `NODE_ENV` | Yes in deployment | `development` or `production` |
-| `PORT` | No | Render supplies it; local default is `3001` |
-| `DATABASE_URL` | Production | PostgreSQL URL kept only in a secret manager |
-| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Optional | `true` by default; keep true in production |
-| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Local fallback | Individual PostgreSQL settings when `DATABASE_URL` is absent |
-| `DATABASE_SSL` | Optional local fallback | Local TLS toggle |
-| `JWT_SECRET` | Production required | Long random secret; never commit |
-| `CORS_ORIGIN` | Recommended | Exact frontend origin, e.g. `http://localhost:5173` locally |
-| `MINDSCAN_DEMO_MODE` | Optional | `true` only for development deterministic UI demo |
-| `PYTHON_EXECUTABLE` | Optional | Research Python executable for cognitive inference |
-| `MINDSCAN_MODEL_DIR` | Optional | Explicit cognitive model bundle directory |
-| `MINDSCAN_MODEL_VERSION` | Optional | Exact cognitive bundle version |
-| `MINDSCAN_MODEL_NAME` | Optional | `logistic_regression` or `random_forest` |
-| `MINDSCAN_AUDIO_MODEL_DIR` | Optional | Explicit speech model bundle directory |
-| `MINDSCAN_AUDIO_MODEL_VERSION` | Optional | Exact speech bundle version |
-| `MINDSCAN_AUDIO_MODEL_NAME` | Optional | Supported speech model name |
-| `MINDSCAN_AUDIO_MODEL_PYTHON` | Optional | Python executable for a configured audio classifier |
-
-### Frontend
-
-| Variable | Required | Purpose/safe example |
-| --- | --- | --- |
-| `VITE_API_URL` | Yes | `http://localhost:3001` locally or the deployed API URL |
-| `VITE_MINDSCAN_DEMO_MODE` | Optional | `true` only to expose the development-only deterministic demo |
-
-Vite exposes `VITE_*` values to the browser. Never put secrets in frontend
-environment variables.
-
-## Testing and evaluation
-
-### JavaScript tests and quality checks
-
-From the repository root:
-
-```powershell
-npm test
-npm run lint
-npm run build
-```
-
-Equivalent focused commands:
-
-```powershell
-npm --prefix Backend test
-npm --prefix Frontend test
-npm --prefix Frontend run lint
-npm --prefix Frontend run build
-```
-
-Backend tests cover authentication-sensitive route behavior, validation,
-database-oriented service behavior with mocks, feature extraction, audio
-validation/cleanup, model runner failures, unavailable states, and synthetic
-normal-flow integration.
-
-Frontend tests cover task helpers, score formatting, prediction rendering,
-speech payload sanitization, and the simulated score-to-percentage calculation.
-
-### Python tests
-
-The root script uses Python's standard unittest discovery:
-
-```powershell
-npm run test:python
-```
-
-Equivalent command:
-
-```powershell
-& .\.venv\Scripts\python.exe -m unittest discover -s Backend\ml -p "test_*.py"
-```
-
-Focused research-model tests:
-
-```powershell
-& .\.venv\Scripts\python.exe -m unittest `
-  Backend.ml.test_train_model `
-  Backend.ml.test_predict `
-  Backend.ml.test_mindscan_dataset `
-  Backend.ml.test_speech_features `
-  Backend.ml.test_transcript_analysis
-```
-
-SATURN artifact tests:
-
-```powershell
-& .\.venv\Scripts\python.exe -m unittest discover `
-  -s research-data\saturn_dryad_2025 -p "test_*.py" -v
-```
-
-These are software and research reproducibility tests. Passing tests do not
-establish clinical validity, calibration, fairness, or regulatory compliance.
-
-### Research evaluation interpretation
-
-- Synthetic metrics evaluate recovery of synthetic labels.
-- SATURN metrics evaluate a retrospective ICD-code proxy on a small,
-  participant-disjoint held-out partition.
-- Legacy OASIS-style metrics are historical artifact metadata and do not
-  describe live MindScan behavior.
-- No metric in this repository is a validated dementia-detection accuracy.
-
-## Deployment
-
-### Documented production topology
-
-The repository documents:
-
-- **Frontend:** Vercel, with a `VITE_API_URL` pointing to the backend.
-- **Backend:** Render service rooted at `Backend`.
-- **Database:** Neon PostgreSQL over TLS.
-
-Render configuration:
-
-```text
-Root directory: Backend
-Build command: npm install
-Start command: npm start
-Health check path: /api/health
-```
-
-Production backend requirements:
-
-```text
-NODE_ENV=production
-DATABASE_URL=<secret Neon connection string>
-JWT_SECRET=<secret random value>
-CORS_ORIGIN=https://dementia-detection-tool.vercel.app
-```
-
-`PORT` is supplied by Render. Apply the schema explicitly from a trusted
-machine:
-
-```powershell
-$env:DATABASE_URL = "<secret Neon connection string>"
-$env:NODE_ENV = "production"
-npm --prefix Backend run migrate
-```
-
-Do not run `database:ensure` against production. Do not store credentials in
-the repository, browser bundle, logs, or README. Production CORS requires the
-exact configured frontend origin. The backend health endpoint returns `200`
-with database status when connected and `503` with a non-sensitive unavailable
-response when PostgreSQL cannot be reached.
-
-The documented deployment does not enable a clinical MindScan model. A
-synthetic bundle is rejected in production unless a separate reviewed
-demo-deployment configuration is intentionally supplied. The current audio
-workflow also requires a compatible Python runtime and cached Whisper weights;
-ephemeral deployment filesystems are not suitable for retaining uploads.
-
-## Limitations and future work
-
-1. **Instrument validity:** MindScan task measurements are not equivalent to
-   MMSE, MoCA, CDR, or a clinical neuropsychological assessment.
-2. **Compatible labelled data:** Build an authorized, participant-level
-   MindScan dataset with independently defined labels before claiming
-   MindScan model performance.
-3. **External validation:** Add untouched external cohorts, calibration,
-   subgroup analysis, missingness analysis, confidence intervals, and
-   prospective evaluation.
-4. **Schema governance:** Version task definitions, feature ranges, labels,
-   provenance manifests, and model bundles together.
-5. **Speech research:** Obtain authorized labelled speech data, verify
-   participant linkage, and evaluate a speech model separately before any
-   fusion.
-6. **Multimodal fusion:** Train and validate a dedicated fusion model; never
-   average independent class scores without matched labels and an approved
-   evaluation design.
-7. **Privacy and security:** Add production TLS/storage controls, retention and
-   deletion procedures, least-privilege database access, audit logging, secret
-   rotation, rate limiting, and institutional/ethics review.
-8. **Accessibility and fairness:** Test language, accent, education, device,
-   motor, hearing, and visual-accessibility effects before broader use.
-9. **Operations:** Add monitoring for model/schema drift, inference failures,
-   dependency changes, and artifact integrity.
-10. **Clinical governance:** Establish intended use, human oversight, risk
-    management, consent language, and applicable institutional/legal review.
-
-## References
-
-### Project and dataset references
-
-- SATURN Dryad dataset, DOI
-  [`10.5061/dryad.j9kd51cq4`](https://doi.org/10.5061/dryad.j9kd51cq4).
-  See the isolated [SATURN README](./research-data/saturn_dryad_2025/README.md)
-  and [experiment report](./research-data/saturn_dryad_2025/EXPERIMENT_REPORT.md).
-- OASIS project site:
-  [https://sites.wustl.edu/oasisbrains/](https://sites.wustl.edu/oasisbrains/).
-  The local legacy artifact does not establish a verified release or license.
-- DementiaBank access documentation:
-  [https://talkbank.org/dementia/access/](https://talkbank.org/dementia/access/).
-  No restricted corpus is treated as a project training dataset without
-  authorization.
-
-### Cognitive-domain references used for synthetic design context
-
-The synthetic generator records these references and explicitly does not copy
-their thresholds into MindScan:
-
-- Folstein MF, Folstein SE, McHugh PR. *Mini-Mental State*. Journal of
-  Psychiatric Research. 1975;12(3):189–198.
-  [doi:10.1016/0022-3956(75)90026-6](https://doi.org/10.1016/0022-3956(75)90026-6).
-- Nasreddine ZS, et al. *The Montreal Cognitive Assessment, MoCA: a brief
-  screening tool for mild cognitive impairment*. Journal of the American
-  Geriatrics Society. 2005;53(4):695–699.
-  [doi:10.1111/j.1532-5415.2005.53221.x](https://doi.org/10.1111/j.1532-5415.2005.53221.x).
-- Tombaugh TN, McIntyre NJ. *The Mini-Mental State Examination: a
-  comprehensive review*. Journal of the American Geriatrics Society.
-  1992;40(9):922–935.
-  [doi:10.1111/j.1532-5415.1992.tb01992.x](https://doi.org/10.1111/j.1532-5415.1992.tb01992.x).
-
-These papers support the existence of related cognitive domains; they do not
-provide a threshold or conversion from MindScan task values to a diagnosis.
-
-### Official technical documentation
-
-- [React documentation](https://react.dev/)
-- [Vite documentation](https://vite.dev/)
-- [Express documentation](https://expressjs.com/)
-- [Node.js documentation](https://nodejs.org/docs/latest/api/)
-- [PostgreSQL documentation](https://www.postgresql.org/docs/)
-- [scikit-learn documentation](https://scikit-learn.org/stable/)
-- [pandas documentation](https://pandas.pydata.org/docs/)
-- [joblib documentation](https://joblib.readthedocs.io/)
-- [faster-whisper repository](https://github.com/SYSTRAN/faster-whisper)
-- [Render documentation](https://render.com/docs)
-- [Neon documentation](https://neon.tech/docs)
-- [Vercel documentation](https://vercel.com/docs)
-
-## Project directory
-
-```text
-.
-├── Backend/
-│   ├── controller/              Express controllers
-│   ├── database/                SQL schema and numbered migrations
-│   ├── middleware/              JWT authentication middleware
-│   ├── ml/                      Python contracts, training, inference, speech
-│   ├── routes/                  Authenticated/public API route definitions
-│   ├── services/                Persistence, validation, feature adapter
-│   ├── tests/                   Node backend tests
-│   ├── .env.example             Safe configuration template
-│   └── package.json
-├── Frontend/
-│   ├── src/
-│   │   ├── App.jsx              Assessment workflow and report UI
-│   │   ├── assessmentUtils.js   Browser task/report helpers
-│   │   └── api.js               Vite API URL configuration
-│   ├── tests/                   Frontend tests
-│   ├── .env.example             Safe frontend configuration template
-│   └── package.json
-├── artifacts/
-│   ├── models/
-│   │   ├── synthetic-research/  Synthetic MindScan mechanics bundle
-│   │   ├── tabular/             Legacy incompatible OASIS-style artifact
-│   │   └── audio/               Audio audit metadata/features
-│   └── reports/                 Aggregate audit output
-├── research-data/
-│   └── saturn_dryad_2025/       Isolated SATURN audit, code, schema, artifacts
-├── docs/                        Architecture, privacy, testing, model/data notes
-├── scripts/dev.js               Starts backend and frontend together
-├── setup.ps1                    Windows local setup
-├── package.json                 Root setup/test/lint/build scripts
-└── README.md
-```
-
-Only authorized, non-sensitive research artifacts should be placed under
-version control. Do not commit `.env` files, credentials, participant records,
-audio, access agreements, or unreviewed model binaries.
+---
+
+## 6. Project Folder Structure
+
+| Path | Responsibility |
+|---|---|
+| `Backend/server.js` | Express app setup, CORS, rate limiters, security headers, route mounting, health check |
+| `Backend/routes/` | Express route definitions (`auth`, `screening`, `audio`, `drawing`, `riskAssessment`, `clinician`, `patient`, `result`, `notification`, `imaging`, `ml`, `ai`) |
+| `Backend/controller/` | Request parsing, status codes, temp-file audio upload handling (`audioAgentController.js`) |
+| `Backend/services/` | Business logic: `authService.js`, `screeningService.js`, `assessmentValidation.js`, `riskAssessmentService.js`, `recommendationService.js`, `clinicianService.js`, `pdfReportService.js` |
+| `Backend/middleware/` | `authMiddleware.js` (JWT verification), `requireRole.js`, `securityMiddleware.js` |
+| `Backend/database/migrations/` | Numbered SQL migrations `000_core_tables.sql` through `006_brain_imaging_scans.sql` |
+| `Backend/ml/` | Python audio/ML inference (`transcribe_audio.py`, `audio_classifier.py`, `analyze_drawing.py`, `preprocessing/`, `training/dementianet_pipeline.py`) |
+| `Frontend/src/` | React SPA (`App.jsx`, `authRouting.js`, `assessmentUtils.js`, `components/AuthPortal.jsx`, `PatientDashboard.jsx`, `ClinicianDashboard.jsx`, `VoiceTask.jsx`, `OptionalPhysicalExamTask.jsx`, `MultimodalSummary.jsx`, cognitive task components) |
+| `artifacts/models/speech_poc/` | Versioned DementiaNet speech PoC bundle (`dementianet-acoustic-v1.0.0/`) with SHA-256 checksums |
+
+---
+
+## 7. Database Schema & Migrations
+
+| Table (Migration) | Key Columns | Relationships |
+|---|---|---|
+| `users` (`000`, `004`) | `id` (PK), `name`, `email` (UNIQUE), `password_hash`, `role` (`patient`/`clinician`), `preferred_language` | Referenced by `screening_sessions`, `notifications`, `clinician_reviews`, `clinician_patient_assignments`, `brain_imaging_scans` |
+| `screening_sessions` (`000`) | `id` (PK), `user_id` (FK -> `users`), `status`, `started_at`, `completed_at` | Parent of `screening_patient_profiles`, `task_responses`, `screening_results`, `clinician_reviews`, `brain_imaging_scans` |
+| `screening_patient_profiles` (`001`) | `screening_id` (PK/FK), `patient_identifier`, `age` (1–120), `sex`, `education_years`, `handedness`, `consent_at` | 1:1 with `screening_sessions` |
+| `task_responses` (`000`, `003`) | `id` (PK), `screening_id` (FK), `task_type`, `response_data` (`JSONB`), `score`, `reaction_time` | Indexed on `(screening_id, task_type, created_at DESC, id DESC)` |
+| `screening_results` (`000`, `002`) | `id` (PK), `screening_id` (UNIQUE FK), `memory_score`, `attention_score`, `language_score`, `orientation_score`, `overall_score`, `task_scores` (`JSONB` storing `__multimodalSummary`), `recommendation`, `flags` | 1:1 with `screening_sessions` |
+| `notifications` (`004`) | `id` (PK), `user_id` (FK), `title`, `message`, `type`, `is_read` | Indexed on `(user_id, is_read, created_at DESC)` |
+| `clinician_reviews` (`004`, `005`) | `id` (PK), `screening_id` (FK), `clinician_id` (FK), `patient_id` (FK), `notes`, `review_status` (`pending`/`in_review`/`reviewed`), `follow_up_recommended` | Immutable clinician notes separate from patient responses |
+| `clinician_patient_assignments` (`005`) | `id` (PK), `clinician_id` (FK), `patient_id` (FK), `UNIQUE(clinician_id, patient_id)` | Gates all clinician screening & PDF access |
+| `brain_imaging_scans` (`006`) | `id` (PK), `screening_id` (FK), `user_id` (FK), `modality` (`mri`/`ct`), `original_format`, `storage_key`, `file_sha256`, `deidentified_metadata` | Metadata & quality-check storage |
+
+---
+
+## 8. Authentication and Security
+
+- **Password Hashing:** `bcrypt` with cost factor `12`.
+- **JWTs:** Signed with `JWT_SECRET` (`expiresIn: "1d"`), containing `{ userId, role }`. `authMiddleware` verifies signature and expiration on all protected routes.
+- **Role-Based Access Control (`requireRole`):** Clinician endpoints (`/api/clinician/*`) require `role === "clinician"`; public `/api/auth/register` rejects non-patient roles with `403`.
+- **Assignment Isolation (`isClinicianAuthorizedForScreening`):** Clinicians can only read/review/download PDFs for patients explicitly assigned in `clinician_patient_assignments` (unassigned screenings return `403`).
+- **Hardening (`server.js`, `securityMiddleware.js`):** Rate limiting on `/api/auth` (`60` req / `15m`) and `/api/audio` (`20` req / `1m`), `X-Powered-By` disabled, security headers, strict CORS in production, input validation (`assessmentValidation.js`), no raw transcript persistence, and `.gitignore` exclusions for `.env`, raw audio, and model binaries.
+
+---
+
+## 9. Machine Learning and Audio Processing
+
+- **Dataset:** **DementiaNet** (`github.com/shreyasgite/dementianet`) — public-figure English YouTube interview WAV clips with **weak biographical labels** (`nodementia` vs `dementia`), **not** clinical MMSE/MoCA/CDR diagnoses.
+- **Post-Download Audio Audit (`research-data/dementianet/raw/`, gitignored):** `454` WAVs downloaded -> `453` valid (`>= 0.5s`, `44100 Hz`), `1` corrupt/silent skipped, `0` duplicates, **`214` unique speakers** (`nodementia: 324`, `dementia: 129`).
+- **44 Acoustic/Prosodic Features (`ACOUSTIC_FEATURE_COLS`):**
+  - Voicing & Energy (4): `voiced_frame_ratio`, `voiced_unvoiced_ratio`, `energy_rms_mean`, `energy_rms_std`
+  - Spectral & ZCR (4): `zcr_mean`, `spectral_centroid_hz`, `spectral_bandwidth_hz`, `spectral_rolloff_hz`
+  - Pitch & Perturbation (7): `pitch_mean_hz`, `pitch_median_hz`, `pitch_std_hz`, `pitch_range_hz`, `jitter_local`, `shimmer_local`, `hnr_mean_db`
+  - Waveform Silence/Pause (3): `waveform_silence_ratio`, `waveform_pause_count`, `waveform_mean_pause_seconds`
+  - MFCCs (26): `mfcc_1_mean`..`mfcc_13_mean`, `mfcc_1_std`..`mfcc_13_std`
+- **Speaker-Disjoint Split (`participant_level_split`):** Train `271` (`128` speakers), Validation `91` (`43` speakers), Test `91` (`43` speakers) — zero speaker overlap.
+- **Independent Test Set Results (`n = 91` recordings, `43` speakers):**
+
+| Model | Accuracy (95% Wilson CI) | Precision | Recall | Specificity | F1 | ROC-AUC | PR-AUC |
+|---|---|---|---|---|---|---|---|
+| **`logistic_regression` (Selected)** | **0.7363** `[0.6375, 0.8159]` | **0.5333** | **0.6154** | **0.7846** | **0.5714** | **0.7562** | **0.5257** |
+| `svm_rbf` | 0.7143 `[0.6143, 0.7969]` | 0.5000 | 0.4615 | 0.8154 | 0.4800 | 0.6763 | 0.4444 |
+| `gradient_boosting` | 0.6923 `[0.5913, 0.7777]` | 0.4375 | 0.2692 | 0.8615 | 0.3333 | 0.6568 | 0.4085 |
+| `random_forest` | 0.6593 `[0.5573, 0.7485]` | 0.3913 | 0.3462 | 0.7846 | 0.3673 | 0.6757 | 0.4105 |
+| `silence_control` (baseline) | 0.5824 `[0.4798, 0.6784]` | 0.3000 | 0.3462 | 0.6769 | 0.3214 | 0.5101 | 0.3719 |
+
+- **Runtime Gating (`classify_acoustic_poc`):**
+  - Verifies `metadata.json` and `.joblib` SHA-256 checksum (`Model unavailable` if missing/tampered).
+  - Requires `language == "en"`, `quality_reliable === true`, and all 44 finite features (`Inconclusive` otherwise; never fabricates missing features).
+  - Uses default `0.50` validation cutoff (`dementianet-val-default-0.50/v1.0`), labeled *"Experimental classification — threshold not clinically validated"*.
+
+---
+
+## 10. Experimental MRI Dataset, Model & Age Confounding (Stages 14–14.2)
+
+### Dataset & Participant-Disjoint Split
+- **Dataset:** `radiata-ai/brain-structure` (`OASIS-1` and `OASIS-2` T1-weighted structural brain MRI subset, skull-stripped and MNI152-aligned at `113×137×113`, `1.5 mm³` isotropic resolution).
+- **Cohort Counts:** **`787` 3D T1-weighted MRI scans** across **`564` unique participants** (`0` corrupt scans, `0` duplicate SHA-256 hashes):
+  - **`cognitively_normal`:** `522` scans (`400` subjects)
+  - **`Alzheimers_disease`:** `265` scans (`178` subjects)
+  - *(Does **not** cover MCI or non-AD dementias.)*
+- **Participant-Disjoint Split (`participant_level_split`, seed `42`):** Train `472` scans (`339` participants), Validation `157` scans (`113` participants), Untouched Test `158` scans (`112` participants) — zero participant overlap across splits (`OASIS-2` longitudinal visits stay grouped).
+- **Preprocessing Isolation:** `SimpleImputer` and `StandardScaler` are fit strictly on the training split; test-set statistics are never used.
+
+### Architectures Evaluated & Selected Model
+Three candidate architectures were trained and evaluated (`Backend/ml/training/radiata_mri_pipeline.py`):
+1. **`volumetric_logreg` (Selected Live Default):** `SimpleImputer` + `StandardScaler` + `LogisticRegression(class_weight="balanced")` on 27 3D morphometric and regional intensity features.
+2. **`triplanar_2d_cnn`:** PyTorch `Conv2d` on 3-channel (`64×64` axial/coronal/sagittal mid-slices) with `BCEWithLogitsLoss(pos_weight=...)`.
+3. **`lightweight_3d_cnn`:** PyTorch `Conv3d` on `32×40×32` trilinearly downsampled MRI volumes with `BCEWithLogitsLoss(pos_weight=...)`.
+
+**Untouched Original Test Set Results (`n = 158` scans, `112` participants):**
+
+| Model | Val ROC-AUC | Accuracy (95% CI) | Precision | Recall | Specificity | F1 | ROC-AUC | PR-AUC |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **`volumetric_logreg` (Selected)** | `0.7910` | **79.11%** `[0.7212, 0.8472]` | **66.15%** | **79.63%** | **78.85%** | **72.27%** | **0.8770** | **0.7404** |
+| `triplanar_2d_cnn` | `0.8385` | `60.76%` `[0.5298, 0.6803]` | `46.49%` | `98.15%` | `41.35%` | `63.10%` | `0.8312` | `0.6904` |
+| `lightweight_3d_cnn` | `0.7979` | `34.18%` `[0.2724, 0.4187]` | `34.18%` | `100.00%` | `0.00%` | `50.94%` | `0.7981` | `0.6436` |
+
+- **Bundle & Isolation:** Stored at `artifacts/models/imaging/radiata-oasis-mri-v1.0.0/` (gitignored) with SHA-256 verification. MRI inference is **completely isolated** from the cognitive Assessment Performance Score and the DementiaNet speech classifier.
+- **CT AI Inference:** Explicitly **unavailable** because no authorized labelled brain CT dementia dataset is available.
+
+### Age Confounding Investigation (Stage 14.2)
+Stage 14.1 revealed a major age imbalance across the `787` scans (`0` missing age or sex; all `787` scans acquired on Siemens `Vision` `1.5T` scanners, so scanner/field strength is not confounded within this subset):
+- **Cognitively normal mean age:** `57.98` years (`± 24.77`, range `18–97`, includes young `18–59` adults in OASIS-1)
+- **Alzheimer's disease mean age:** `76.77` years (`± 7.09`, range `61–98`)
+- **Mean age difference:** approximately **`18.8` years**
+
+| Evaluation Setup | Test n (pos) | Accuracy (95% CI) | ROC-AUC | PR-AUC |
+|---|---:|---:|---:|---:|
+| **Original MRI (`volumetric_logreg`, full test)** | `158` (`54`) | `79.11%` `[0.7212, 0.8472]` | `0.8770` | `0.7404` |
+| **Age-Only Baseline (full test)** | `158` (`54`) | `62.66%` `[0.5490, 0.6982]` | `0.6868` | `0.4506` |
+| **Age-Restricted MRI (`test[age >= 60]`)** | `112` (`54`) | `70.54%` `[0.6152, 0.7818]` | `0.7842` | `0.7420` |
+| **Age-Restricted Age-Only (`test[age >= 60]`)** | `112` (`54`) | `47.32%` `[0.3832, 0.5650]` | `0.4384` | `0.4506` |
+| **Fresh Age-Matched MRI (`age >= 60` cohort)** | `115` (`53`) | `71.30%` `[0.6245, 0.7878]` | `0.7754` | `0.7780` |
+| **Fresh Age-Matched Age-Only (`age >= 60` cohort)** | `115` (`53`) | `47.83%` `[0.3891, 0.5688]` | `0.4819` | `0.4560` |
+
+> **Scientific Caution:** Because `Age-Only` alone achieves `0.6868` ROC-AUC on the full cohort (and drops to chance `0.4384–0.4819` when `18–59` controls are excluded), the original headline ROC-AUC of `0.8770` is inflated by `~0.09–0.10` due to age imbalance and **must not be interpreted as independent clinical Alzheimer's detection performance**. While the MRI model retains structural signal above age (`0.7754–0.7842` ROC-AUC at `age >= 60`), it remains strictly an experimental proof-of-concept.
+
+---
+
+## 11. Scoring and Results
+
+- **Assessment Performance Score (`assessment-performance/1.0.0`):**
+  $$\text{Assessment Performance Score} = \frac{1}{|M|} \sum_{t \in M} s_t$$
+  where $M$ is the subset of completed, non-skipped numeric tasks from `memory`, `delayed_memory`, `digit_span`, `picture_recognition`, `pattern_recognition`, `orientation`, and `attention`.
+- **Excluded Tasks:** Skipped and missing tasks are excluded (never scored as `0`); `language` (unscored), `clock_drawing` (spatial CV heuristics), `voice` (speech timing/classifier), and `physical_examination` (observational only) are kept separate.
+- **Assessment Completeness:** `completedCount / 10 * 100%`, reported separately.
+- **Experimental Speech Scores:** `scores_are_calibrated_probabilities` is `false` — scores are relative uncalibrated classifier outputs, never clinical dementia probabilities.
+
+---
+
+## 12. Testing and Verification
+
+Latest verified results (Stages 14–14.2):
+
+| Suite | Command / Scope | Result |
+|---|---|---|
+| **Backend Node Tests** | `npm --prefix Backend test` | **`75/75` passed** (`0` failures) |
+| **Frontend Unit Tests** | `npm --prefix Frontend test` | **`16/16` passed** (`0` failures) |
+| **Frontend Production Build** | `npm --prefix Frontend run build` | **Passed** (`32` modules transformed in `280ms`, `0` errors) |
+| **`.venv-audio` Audio & MRI PoC Tests** | `test_audio_validation`, `test_transcribe_audio`, `test_dementianet_poc`, `test_radiata_mri_poc` | **`17/17` passed** (`0` failures) |
+| **Full Python ML Suite** | `python -m unittest discover -s Backend\ml -p "test_*.py"` | **`79` run: `74` passed, `5` skipped, `0` failures** |
+| **Live Browser E2E (Stages 10.7–14.1)** | Chromium against `localhost:5173` -> `localhost:3001` | Patient, Clinician, Physical Exam, Stage 12 role-login/routing, live **MRI upload (`201`) + Neon persistence**, **corrupt MRI rejection (`400`)**, and **CT inference unavailable (`201`)** verified (`0` console errors) |
+
+> **PDF Verification Note:** While full Screening PDF downloads were verified in Stages 10.7–11, **Screening `#18` PDF download** (used for Stage 14.1 imaging upload testing) was **not** completed (`GET /api/screening/18/report.pdf` returned `HTTP 404`: `"Complete these required tasks first: memory, attention, orientation, language"`) because Screening `#18` had only imaging uploaded without the required cognitive tasks. Full PDF E2E verification is therefore not claimed for Screening `#18`.
+
+---
+
+## 13. Limitations and Future Scope
+
+- **Research Proof-of-Concept Only / No External Clinical Validation:** Neither the cognitive Assessment Performance Score, the `0.50` DementiaNet speech cutoff, nor the experimental MRI model is clinically validated against external multi-site clinical cohorts or gold-standard diagnoses (MMSE/MoCA/CDR).
+- **MRI Age-Related Confounding & Demographic Imbalance:** In the `radiata-ai/brain-structure` OASIS-1+2 subset, cognitively normal controls are on average `~18.8` years younger (`57.98` vs `76.77` years) and include `18–59` adults, inflating full-cohort ROC-AUC (`0.8770`) relative to age-matched `age >= 60` performance (`0.7754–0.7842`). All scans are also single-scanner (`Siemens Vision 1.5T`) skull-stripped MNI152 volumes (`113×137×113`).
+- **Experimental MRI Output & Uncalibrated Scores:** MRI inference returns an **experimental research label** (`cognitively_normal` or `Alzheimers_disease` only — no MCI or non-AD dementias), **not a clinical diagnosis**, and its scores are **uncalibrated relative scores** (`scores_are_calibrated_probabilities: false`), **not diagnostic probabilities**.
+- **No Brain CT AI Inference:** No authorized labelled brain CT dementia dataset is available; Brain CT uploads store validated metadata only with AI inference explicitly `unavailable`.
+- **Experimental Speech Model:** DementiaNet uses public-figure English YouTube interviews with weak biographical labels, class imbalance (`324` vs `129`), and English-only coverage (`hi`/`pa`/`si`/`ta` gated as `Inconclusive`).
+- **Minor UI Polish:** Minor horizontal overflow on `375×812` mobile viewports; SPA production hosting requires rewrite rules to `index.html`.
+- **Future Scope:** Acquire DUA-governed multi-site clinical corpora (ADReSSo, DementiaBank Pitt, ADNI, clinical CT cohorts), train age-matched and multilingual models, calibrate probabilities, and run prospective clinical validation.
+
+---
+
+## 14. License, Dataset Restrictions & Acknowledgements
+
+- **Project License:** `ISC` (as declared in `Backend/package.json`; no root `LICENSE` file is present).
+- **OASIS & MRI Dataset Licensing Restrictions:**
+  - `radiata-ai/brain-structure` (`ODC-By v1.0` compilation) contains preprocessed `OASIS-1` and `OASIS-2` T1-weighted MRI volumes (`https://sites.wustl.edu/oasisbrains/`).
+  - **OASIS Data Use Agreement (DUA) obligations remain applicable:** Anonymization or skull-stripping does **not** automatically remove redistribution restrictions or DUA obligations. Facial reconstruction and re-identification are strictly prohibited.
+  - **Gitignored Local Assets:** Both raw `.nii.gz` scans (`research-data/radiata_mri/`) and trained model weights (`artifacts/models/imaging/radiata-oasis-mri-v1.0.0/`, `artifacts/models/speech_poc/`) remain gitignored and **must not be publicly redistributed** without appropriate permission and compliance with source terms.
+  - Always provide attribution (`OASIS-1`, `OASIS-2`, `radiata-ai/brain-structure`) and follow all applicable dataset terms.
+- **Other Third-Party Datasets & Dependencies:**
+  - **DementiaNet:** MIT-licensed repository metadata; third-party YouTube audio clips used locally for non-commercial research only (excluded via `.gitignore`).
+  - **Zenodo Open Datasets (`13378346`, `5509808`):** `CC-BY-4.0`.
+  - **Libraries:** React, Express, PostgreSQL (`pg`), `faster-whisper`, PyAV, `scikit-learn`, `joblib`, `nibabel`, `Pillow`, `bcrypt`, `jsonwebtoken`.

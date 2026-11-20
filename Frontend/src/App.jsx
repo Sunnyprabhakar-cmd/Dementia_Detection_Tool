@@ -7,6 +7,25 @@ import {
   isRenderablePrediction
 } from "./assessmentUtils.js";
 import { API_BASE_URL } from "./api.js";
+import ClockDrawingTask from "./components/ClockDrawingTask.jsx";
+import DelayedMemoryTask from "./components/DelayedMemoryTask.jsx";
+import DigitSpanTask from "./components/DigitSpanTask.jsx";
+import PatternRecognitionTask from "./components/PatternRecognitionTask.jsx";
+import PictureRecognitionTask from "./components/PictureRecognitionTask.jsx";
+import VoiceTask from "./components/VoiceTask.jsx";
+import OptionalPhysicalExamTask from "./components/OptionalPhysicalExamTask.jsx";
+import MultimodalSummary from "./components/MultimodalSummary.jsx";
+import AuthPortal from "./components/AuthPortal.jsx";
+import {
+  AUTH_ROUTES,
+  dashboardPathForRole,
+  getTokenRoleAndValidity,
+  normalizePathname,
+  resolveAuthorizedRoute,
+  validatePortalLoginRole
+} from "./authRouting.js";
+import PatientDashboard from "./components/PatientDashboard.jsx";
+import ClinicianDashboard from "./components/ClinicianDashboard.jsx";
 import "./App.css";
 
 const hasMeasuredValue = (value) => {
@@ -135,7 +154,9 @@ function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [language, setLanguage] = useState("en");
-  const [token, setToken] = useState(localStorage.getItem("token") || "");
+  const [token, setToken] = useState(() => localStorage.getItem("token") || "");
+  const [routePath, setRoutePath] = useState(() => normalizePathname(window.location.pathname));
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [screeningId, setScreeningId] = useState(null);
   const [patientInfo, setPatientInfo] = useState({
     patientIdentifier: "",
@@ -160,7 +181,6 @@ function App() {
   const [attentionData, setAttentionData] = useState({ correct: 0, wrong: 0, missed: 0, reactionTimes: [] });
   const [orientationData, setOrientationData] = useState({ year: "", month: "", date: "", place: "" });
   const [languageData, setLanguageData] = useState(() => buildLanguageState());
-  const [motorHand, setMotorHand] = useState("right");
   const [clinicianData, setClinicianData] = useState(() => ({
     observationDate: new Date().toISOString().slice(0, 10),
     assessorRole: "",
@@ -193,12 +213,63 @@ function App() {
   const t = languagePack[language] || languagePack.en;
   const demoModeEnabled = import.meta.env.VITE_MINDSCAN_DEMO_MODE === "true";
 
+  const tokenAuth = getTokenRoleAndValidity(token);
+  const isLoggedIn = tokenAuth.valid;
+  const userRole = tokenAuth.role || "patient";
+
+  const navigateTo = useCallback((nextPath, { replace = false } = {}) => {
+    const normalized = normalizePathname(nextPath);
+    if (normalizePathname(window.location.pathname) !== normalized) {
+      if (replace) {
+        window.history.replaceState({}, "", normalized);
+      } else {
+        window.history.pushState({}, "", normalized);
+      }
+    }
+    setRoutePath(normalized);
+  }, []);
+
   useEffect(() => {
-    localStorage.setItem("token", token);
-  }, [token]);
+    const handlePopState = () => {
+      setRoutePath(normalizePathname(window.location.pathname));
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (token && !tokenAuth.valid) {
+      setToken("");
+      localStorage.removeItem("token");
+      localStorage.removeItem("userRole");
+    }
+  }, [token, tokenAuth.valid]);
+
+  useEffect(() => {
+    const resolved = resolveAuthorizedRoute(routePath, {
+      isLoggedIn,
+      role: tokenAuth.role
+    });
+    if (resolved.redirected) {
+      navigateTo(resolved.path, { replace: true });
+      if (resolved.notice) {
+        setStatus(resolved.notice);
+      }
+    }
+  }, [routePath, isLoggedIn, tokenAuth.role, navigateTo]);
+
+  useEffect(() => {
+    if (token && tokenAuth.valid) {
+      localStorage.setItem("token", token);
+      localStorage.setItem("userRole", tokenAuth.role);
+    } else if (!token) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("userRole");
+    }
+  }, [token, tokenAuth.valid, tokenAuth.role]);
 
   const loadHistory = useCallback(async () => {
-    if (!token) return;
+    if (!token || !isLoggedIn || userRole !== "patient") return;
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/results/history`, {
@@ -220,22 +291,62 @@ function App() {
   }, [token]);
 
   useEffect(() => {
-    if (!token) return undefined;
+    if (!token || !isLoggedIn || userRole !== "patient") return undefined;
     const timer = window.setTimeout(() => {
       void loadHistory();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadHistory, token]);
+  }, [loadHistory, token, isLoggedIn, userRole]);
 
-  const isLoggedIn = Boolean(token);
+  const resumeActiveScreening = useCallback(async () => {
+    if (!token || !isLoggedIn || userRole !== "patient") return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/screening/active`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const active = data?.activeScreening;
+      if (!active?.session?.id) return;
+      setScreeningId(active.session.id);
+      const completed = new Set((active.tasks || []).map((item) => item.task_type));
+      const order = [
+        "memory",
+        "attention",
+        "digit_span",
+        "picture_recognition",
+        "pattern_recognition",
+        "clock_drawing",
+        "orientation",
+        "delayed_memory",
+        "voice",
+        "language",
+        "physical_examination",
+        "clinician_observation"
+      ];
+      const nextStep = order.find((step) => !completed.has(step)) || "summary";
+      const stepMap = { physical_examination: "physical_exam", clinician_observation: "clinician" };
+      setActiveStep(stepMap[nextStep] || nextStep);
+      setStatus(`Resumed active screening #${active.session.id}.`);
+    } catch {
+      // Ignore if no active session
+    }
+  }, [token]);
 
-  const handleAuth = async () => {
+  useEffect(() => {
+    if (!token || !isLoggedIn || userRole !== "patient" || screeningId) return;
+    void resumeActiveScreening();
+  }, [token, isLoggedIn, userRole, screeningId, resumeActiveScreening]);
+
+  const handleAuth = async (expectedPortalRole = "patient") => {
+    setIsAuthSubmitting(true);
     try {
       setStatus("Authenticating...");
-      const endpoint = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const payload = authMode === "login"
-        ? { email, password }
-        : { name, email, password, referBy: "student-project" };
+      const isRegister = expectedPortalRole === "patient" && authMode === "register";
+      const endpoint = isRegister ? "/api/auth/register" : "/api/auth/login";
+      const payload = isRegister
+        ? { name, email, password, referBy: "student-project", preferredLanguage: language }
+        : { email, password };
 
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: "POST",
@@ -246,15 +357,32 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Authentication failed");
 
-      if (authMode === "login") {
-        setToken(data.token || "");
-        setStatus("Login successful. You can begin the screening.");
+      if (!isRegister) {
+        const nextToken = data.token || "";
+        const nextRole = data.user?.role || getTokenRoleAndValidity(nextToken).role || "patient";
+        const roleCheck = validatePortalLoginRole(expectedPortalRole, nextRole);
+        if (!roleCheck.allowed) {
+          setStatus(roleCheck.message);
+          return;
+        }
+        setToken(nextToken);
+        localStorage.setItem("token", nextToken);
+        localStorage.setItem("userRole", nextRole);
+        if (data.user?.preferredLanguage) setLanguage(data.user.preferredLanguage);
+        setStatus(
+          nextRole === "clinician"
+            ? "Clinician login successful."
+            : "Login successful. You can begin the screening."
+        );
+        navigateTo(dashboardPathForRole(nextRole), { replace: true });
       } else {
         setStatus("Registration successful. Please log in.");
         setAuthMode("login");
       }
     } catch (error) {
       setStatus(error.message || "Something went wrong");
+    } finally {
+      setIsAuthSubmitting(false);
     }
   };
 
@@ -338,7 +466,20 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Could not retrieve the assessment report");
-      setResult(data.result);
+      let multimodalSummary = null;
+      try {
+        const sumResp = await fetch(API_BASE_URL + "/api/screening/" + screeningId + "/summary", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token }
+        });
+        if (sumResp.ok) {
+          const sumData = await sumResp.json();
+          multimodalSummary = sumData.summary || null;
+        }
+      } catch {
+        // Non-blocking fallback
+      }
+      setResult({ ...data.result, multimodalSummary });
       setActiveStep("summary");
       setStatus("Assessment report loaded.");
       await loadHistory();
@@ -365,62 +506,42 @@ function App() {
     setResult(null);
     setActiveStep("dashboard");
     setStatus("");
+    setAuthMode("login");
     localStorage.removeItem("token");
+    localStorage.removeItem("userRole");
+    navigateTo(AUTH_ROUTES.LOGIN_SELECT, { replace: true });
   };
 
   if (!isLoggedIn) {
     return (
-      <div className="auth-shell">
-        <div className="auth-card">
-          <div className="brand-row">
-            <div className="brand-badge">M</div>
-            <div>
-              <h1>{t.appName}</h1>
-              <p>{t.subtitle}</p>
-            </div>
-          </div>
-
-          <div className="toggle-row">
-            <button className={authMode === "login" ? "toggle active" : "toggle"} onClick={() => setAuthMode("login")}>{t.login}</button>
-            <button className={authMode === "register" ? "toggle active" : "toggle"} onClick={() => setAuthMode("register")}>{t.register}</button>
-          </div>
-
-          {authMode === "register" && (
-            <label>
-              <span>{t.fullName}</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t.fullName} />
-            </label>
-          )}
-
-          <label>
-            <span>{t.email}</span>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t.email} />
-          </label>
-
-          <label>
-            <span>{t.password}</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t.password} />
-          </label>
-
-          <label>
-            <span>{t.chooseLanguage}</span>
-            <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-              <option value="en">English</option>
-              <option value="si">Sinhala</option>
-              <option value="ta">தமிழ்</option>
-            </select>
-          </label>
-
-          <button className="primary-btn" onClick={handleAuth}>{authMode === "login" ? t.login : t.register}</button>
-          {status && <p className="status-pill">{status}</p>}
-          {demoModeEnabled && (
-            <div className="demo-launch">
-              <button className="ghost-btn" type="button" onClick={loadDemoReport}>Open simulated demo report</button>
-              {demoReport && <ResultSummary result={demoReport} t={t} />}
-            </div>
-          )}
-        </div>
-      </div>
+      <AuthPortal
+        routePath={routePath}
+        onNavigate={(nextPath) => {
+          setStatus("");
+          navigateTo(nextPath);
+        }}
+        t={t}
+        authMode={authMode}
+        setAuthMode={(nextMode) => {
+          setStatus("");
+          setAuthMode(nextMode);
+        }}
+        name={name}
+        setName={setName}
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+        language={language}
+        setLanguage={setLanguage}
+        isSubmitting={isAuthSubmitting}
+        status={status}
+        onSubmitAuth={handleAuth}
+        demoModeEnabled={demoModeEnabled}
+        onLoadDemoReport={loadDemoReport}
+        demoReport={demoReport}
+        renderDemoReport={(report) => <ResultSummary result={report} t={t} />}
+      />
     );
   }
 
@@ -441,7 +562,8 @@ function App() {
         </div>
       </header>
 
-      <main className="main-grid">
+      <main className="main-grid" style={userRole === "clinician" ? { gridTemplateColumns: "1fr" } : undefined}>
+        {userRole !== "clinician" && (
         <aside className="sidebar card">
           <h3>{t.patient}</h3>
           <div className="profile-list">
@@ -471,14 +593,27 @@ function App() {
             )}
           </div>
         </aside>
+        )}
 
         <section className="content-panel card">
-          {activeStep === "dashboard" && (
-            <div className="empty-state">
-              <h2>{t.startScreening}</h2>
-              <p>Participation is optional. The report records observed task responses and clearly marks unavailable research inference.</p>
-              <button className="primary-btn" onClick={startScreening}>{t.startScreening}</button>
+          {screeningId && activeStep !== "summary" && activeStep !== "dashboard" && activeStep !== "patient" && (
+            <div className="progress-banner" style={{ marginBottom: "12px", fontSize: "0.9rem", color: "#475569" }}>
+              Step: <strong>{activeStep.replace("_", " ").toUpperCase()}</strong>
             </div>
+          )}
+          {activeStep === "dashboard" && (
+            userRole === "clinician" ? (
+              <ClinicianDashboard token={token} />
+            ) : (
+              <PatientDashboard
+                token={token}
+                language={language}
+                onLanguageChange={setLanguage}
+                onStartScreening={startScreening}
+                onContinueScreening={resumeActiveScreening}
+                activeScreeningId={screeningId}
+              />
+            )
           )}
 
           {activeStep === "patient" && (
@@ -501,11 +636,11 @@ function App() {
               t={t}
               value={memoryData}
               setValue={setMemoryData}
-              onNext={async () => {
+              onNext={async (elapsedSeconds) => {
                 const payload = {
                   wordsShown: memoryData.wordsShown,
                   wordsRecalled: memoryData.wordsRecalled,
-                  responseTime: 12.5
+                  responseTime: elapsedSeconds
                 };
                 await submitStep("memory", payload);
                 setActiveStep("attention");
@@ -518,7 +653,7 @@ function App() {
               t={t}
               value={attentionData}
               setValue={setAttentionData}
-              onNext={async () => {
+              onNext={async (elapsedSeconds) => {
                 const payload = {
                   totalRounds: 10,
                   correct: attentionData.correct,
@@ -527,9 +662,44 @@ function App() {
                   averageReactionTime: attentionData.reactionTimes.length
                     ? (attentionData.reactionTimes.reduce((sum, time) => sum + time, 0) / attentionData.reactionTimes.length).toFixed(2)
                     : 0,
-                  reactionTimes: attentionData.reactionTimes
+                  reactionTimes: attentionData.reactionTimes,
+                  responseTime: elapsedSeconds
                 };
                 await submitStep("attention", payload);
+                setActiveStep("digit_span");
+              }}
+            />
+          )}
+
+          {activeStep === "digit_span" && (
+            <DigitSpanTask
+              onNext={async (payload) => {
+                if (await submitStep("digit_span", payload)) setActiveStep("picture_recognition");
+              }}
+            />
+          )}
+
+          {activeStep === "picture_recognition" && (
+            <PictureRecognitionTask
+              onNext={async (payload) => {
+                if (await submitStep("picture_recognition", payload)) setActiveStep("pattern_recognition");
+              }}
+            />
+          )}
+
+          {activeStep === "pattern_recognition" && (
+            <PatternRecognitionTask
+              onNext={async (payload) => {
+                if (await submitStep("pattern_recognition", payload)) setActiveStep("clock_drawing");
+              }}
+            />
+          )}
+
+          {activeStep === "clock_drawing" && (
+            <ClockDrawingTask
+              screeningId={screeningId}
+              token={token}
+              onComplete={async () => {
                 setActiveStep("orientation");
               }}
             />
@@ -540,9 +710,18 @@ function App() {
               t={t}
               value={orientationData}
               setValue={setOrientationData}
-              onNext={async (assessmentDate) => {
-                const payload = { ...orientationData, assessmentDate, responseTime: 10.5 };
-                if (await submitStep("orientation", payload)) setActiveStep("voice");
+              onNext={async (assessmentDate, elapsedSeconds) => {
+                const payload = { ...orientationData, assessmentDate, responseTime: elapsedSeconds };
+                if (await submitStep("orientation", payload)) setActiveStep("delayed_memory");
+              }}
+            />
+          )}
+
+          {activeStep === "delayed_memory" && (
+            <DelayedMemoryTask
+              wordsShown={memoryData.wordsShown}
+              onNext={async (payload) => {
+                if (await submitStep("delayed_memory", payload)) setActiveStep("voice");
               }}
             />
           )}
@@ -550,8 +729,8 @@ function App() {
           {activeStep === "voice" && (
             <VoiceTask
               token={token}
-              onVoiceResult={({ status, duration, language, speech_features, transcript_analysis, provenance }) => (
-                setVoiceAssessment({ status, duration, language, speech_features, transcript_analysis, provenance })
+              onVoiceResult={({ status, duration, language, speech_features, transcript_analysis, quality_warnings, quality_reliable, acoustic_classifier_poc, provenance }) => (
+                setVoiceAssessment({ status, duration, language, speech_features, transcript_analysis, quality_warnings, quality_reliable, acoustic_classifier_poc, provenance })
               )}
               onFinish={async () => {
                 const saved = await submitStep("voice", buildVoiceTaskPayload(voiceAssessment));
@@ -566,23 +745,21 @@ function App() {
               t={t}
               value={languageData}
               setValue={setLanguageData}
-              onFinish={async () => {
+              onFinish={async (elapsedSeconds) => {
                 const payload = {
                   sentence: languageData.sentence,
                   animals: languageData.animals,
-                  responseTime: 14
+                  responseTime: elapsedSeconds
                 };
-                if (await submitStep("language", payload)) setActiveStep("motor");
+                if (await submitStep("language", payload)) setActiveStep("physical_exam");
               }}
             />
           )}
 
-          {activeStep === "motor" && (
-            <MotorTask
-              hand={motorHand}
-              setHand={setMotorHand}
+          {activeStep === "physical_exam" && (
+            <OptionalPhysicalExamTask
               onNext={async (payload) => {
-                if (await submitStep("motor_tapping", payload)) setActiveStep("clinician");
+                if (await submitStep("physical_examination", payload)) setActiveStep("clinician");
               }}
             />
           )}
@@ -609,70 +786,6 @@ function App() {
           {status && !result && <p className="status-pill fixed-status">{status}</p>}
         </section>
       </main>
-    </div>
-  );
-}
-
-function MotorTask({ hand, setHand, onNext }) {
-  const [running, setRunning] = useState(false);
-  const [remaining, setRemaining] = useState(10);
-  const [tapCount, setTapCount] = useState(0);
-  const [inputDevice, setInputDevice] = useState("unknown");
-  const [skipReason, setSkipReason] = useState("");
-  const timestampsRef = useRef([]);
-  const startedAtRef = useRef(null);
-
-  useEffect(() => {
-    if (!running) return undefined;
-    const timer = window.setInterval(() => {
-      const elapsed = (performance.now() - startedAtRef.current) / 1000;
-      if (elapsed >= 10) {
-        setRemaining(0);
-        setRunning(false);
-        window.clearInterval(timer);
-      } else {
-        setRemaining(Math.ceil(10 - elapsed));
-      }
-    }, 100);
-    return () => window.clearInterval(timer);
-  }, [running]);
-
-  const begin = () => {
-    timestampsRef.current = [];
-    setTapCount(0);
-    startedAtRef.current = performance.now();
-    setRemaining(10);
-    setRunning(true);
-  };
-
-  const recordTap = (event) => {
-    if (!running) return;
-    const pointerType = event.nativeEvent.pointerType;
-    if (["mouse", "touch", "pen"].includes(pointerType)) setInputDevice(pointerType);
-    timestampsRef.current.push(performance.now() - startedAtRef.current);
-    setTapCount(timestampsRef.current.length);
-  };
-
-  return (
-    <div className="task-box">
-      <p className="eyebrow">Optional motor task</p>
-      <h2>Exploratory tapping</h2>
-      <p>This 10-second task records input-device-dependent tap timing. It is not a neurological examination.</p>
-      <label><span>Hand used</span><select value={hand} onChange={(event) => setHand(event.target.value)} disabled={running}><option value="right">Right</option><option value="left">Left</option></select></label>
-      {!running && remaining === 10 && <button type="button" className="primary-btn" onClick={begin}>Start tapping</button>}
-      {running && <button type="button" className="attention-btn active" onPointerDown={recordTap}>Tap here · {remaining}s</button>}
-      {!running && remaining === 0 && <p role="status">{tapCount} taps recorded · {inputDevice} input</p>}
-      <label><span>Input device</span><select value={inputDevice} onChange={(event) => setInputDevice(event.target.value)} disabled={running}><option value="unknown">Unknown</option><option value="mouse">Mouse</option><option value="touch">Touch</option><option value="pen">Pen</option></select></label>
-      <div className="task-actions">
-        <button type="button" className="primary-btn" disabled={running || remaining !== 0} onClick={() => onNext({
-          hand,
-          inputDevice,
-          durationSeconds: 10,
-          completed: true,
-          timestampsMs: timestampsRef.current
-        })}>Save task and continue</button>
-      </div>
-      <details><summary>Skip this optional task</summary><label><span>Reason</span><input value={skipReason} onChange={(event) => setSkipReason(event.target.value)} maxLength={500} /></label><button type="button" className="ghost-btn" disabled={!skipReason.trim() || running} onClick={() => onNext({ status: "skipped", skipReason })}>Skip and continue</button></details>
     </div>
   );
 }
@@ -719,6 +832,7 @@ function ClinicianObservationTask({ value, setValue, onFinish }) {
 function MemoryTask({ t, value, setValue, onNext }) {
   const [showWords, setShowWords] = useState(true);
   const [countdown, setCountdown] = useState(8);
+  const startedAtRef = useRef(Date.now());
 
   useEffect(() => {
     if (!showWords) return;
@@ -772,7 +886,12 @@ function MemoryTask({ t, value, setValue, onNext }) {
       )}
 
       <div className="task-actions">
-        <button className="primary-btn" onClick={onNext}>{t.next}</button>
+        <button
+          className="primary-btn"
+          onClick={() => onNext(Number(((Date.now() - startedAtRef.current) / 1000).toFixed(2)))}
+        >
+          {t.next}
+        </button>
       </div>
     </div>
   );
@@ -782,6 +901,7 @@ function AttentionTask({ t, value, setValue, onNext }) {
   const [isTargetVisible, setIsTargetVisible] = useState(false);
   const [round, setRound] = useState(1);
   const timerIdRef = useRef(null);
+  const startedAtRef = useRef(Date.now());
 
   useEffect(() => {
     const delay = 1000 + Math.random() * 1800;
@@ -825,7 +945,7 @@ function AttentionTask({ t, value, setValue, onNext }) {
     }));
     setIsTargetVisible(false);
     if (round >= 10) {
-      onNext();
+      onNext(Number(((Date.now() - startedAtRef.current) / 1000).toFixed(2)));
       return;
     }
     setRound((r) => r + 1);
@@ -846,7 +966,12 @@ function AttentionTask({ t, value, setValue, onNext }) {
         <span>Missed: {value.missed}</span>
       </div>
       <div className="task-actions">
-        <button className="primary-btn" onClick={onNext}>{t.next}</button>
+        <button
+          className="primary-btn"
+          onClick={() => onNext(Number(((Date.now() - startedAtRef.current) / 1000).toFixed(2)))}
+        >
+          {t.next}
+        </button>
       </div>
     </div>
   );
@@ -854,6 +979,7 @@ function AttentionTask({ t, value, setValue, onNext }) {
 
 function OrientationTask({ t, value, setValue, onNext }) {
   const [countdown, setCountdown] = useState(20);
+  const startedAtRef = useRef(Date.now());
   const today = new Date();
   const displayedDate = `${today.getDate()} ${today.toLocaleString("en-US", { month: "long" })} ${today.getFullYear()}`;
 
@@ -894,215 +1020,24 @@ function OrientationTask({ t, value, setValue, onNext }) {
         </label>
       </div>
       <div className="task-actions">
-        <button className="primary-btn" onClick={() => onNext(formatLocalAssessmentDate(today))}>{t.next}</button>
-      </div>
-    </div>
-  );
-}
-
-
-function VoiceTask({ token, onVoiceResult, onFinish }) {
-  const [countdown, setCountdown] = useState(20);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [consented, setConsented] = useState(false);
-  const [status, setStatus] = useState("Ready to record a short voice sample.");
-  const [transcript, setTranscript] = useState("");
-  const [transcriptAnalysis, setTranscriptAnalysis] = useState(null);
-  const [speechFeatures, setSpeechFeatures] = useState(null);
-  const [detectedLanguage, setDetectedLanguage] = useState("");
-  const [classifierResult, setClassifierResult] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState("");
-  const recorderRef = useRef(null);
-  const streamRef = useRef(null);
-  const timerRef = useRef(null);
-  const startTimeRef = useRef(null);
-  const previewUrlRef = useRef("");
-
-  const stopRecording = () => {
-    clearInterval(timerRef.current);
-    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-  };
-
-  const uploadRecording = (blob, contentType) => new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open("POST", API_BASE_URL + "/api/audio/upload");
-    request.setRequestHeader("Authorization", "Bearer " + token);
-    request.setRequestHeader("Content-Type", contentType);
-    request.timeout = 185000;
-    request.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
-    });
-    request.addEventListener("load", () => {
-      let data;
-      try { data = JSON.parse(request.responseText); }
-      catch { reject(new Error("The audio service returned an unreadable response. Please retry.")); return; }
-      if (request.status < 200 || request.status >= 300) {
-        reject(new Error(data.error?.message || data.message || "Audio transcription failed."));
-        return;
-      }
-      resolve(data);
-    });
-    request.addEventListener("error", () => reject(new Error("Network error while uploading audio. Check your connection and retry.")));
-    request.addEventListener("timeout", () => reject(new Error("Audio processing timed out. Try a shorter recording.")));
-    request.send(blob);
-  });
-
-  useEffect(() => {
-    if (!isRecording) return undefined;
-    timerRef.current = window.setInterval(() => {
-      setCountdown((current) => {
-        if (current <= 1) {
-          clearInterval(timerRef.current);
-          if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timerRef.current);
-  }, [isRecording]);
-
-  const startRecording = async () => {
-    try {
-      if (!consented) throw new Error("Please confirm consent before recording.");
-      if (!token) throw new Error("Please sign in before recording.");
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone access is unavailable in this browser.");
-      if (!window.MediaRecorder) throw new Error("Audio recording is not supported by this browser.");
-      if (transcript && !window.confirm("Replace the previous transcript with a new recording?")) return;
-
-      setClassifierResult(null);
-      setTranscript("");
-      setDetectedLanguage("");
-      setTranscriptAnalysis(null);
-      setSpeechFeatures(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
-        .find((type) => window.MediaRecorder.isTypeSupported(type));
-      const recorder = mimeType
-        ? new window.MediaRecorder(stream, { mimeType })
-        : new window.MediaRecorder(stream);
-      const chunks = [];
-      recorder.ondataavailable = (event) => { if (event.data?.size) chunks.push(event.data); };
-      recorder.onstop = async () => {
-        setIsRecording(false);
-        setRecordingSeconds(Number(Math.min(20, Math.max(0, (Date.now() - startTimeRef.current) / 1000)).toFixed(1)));
-        setIsUploading(true);
-        setUploadProgress(0);
-        setStatus("Uploading securely for temporary transcription...");
-        try {
-          const blobType = recorder.mimeType || "audio/webm";
-          const blob = new Blob(chunks, { type: blobType });
-          if (!blob.size) throw new Error("No audio was captured. Check microphone permission and try again.");
-          if (blob.size > 12 * 1024 * 1024) throw new Error("This recording exceeds 12 MB. Please record a shorter sample.");
-          if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-          previewUrlRef.current = URL.createObjectURL(blob);
-          setPreviewUrl(previewUrlRef.current);
-          const data = await uploadRecording(blob, blobType.split(";")[0].toLowerCase());
-          const result = data.transcription;
-          if (!result || result.status !== "success") throw new Error("The server did not return a transcript.");
-          const transcriptText = String(result.transcript || "").trim();
-          setTranscript(transcriptText);
-          setDetectedLanguage(result.language || "unknown");
-          const analysis = data.transcript_analysis || result.transcript_analysis || null;
-          setTranscriptAnalysis(analysis);
-          setSpeechFeatures(data.speech_features || result.speech_features || null);
-          setClassifierResult(data.classifier || { status: "unavailable" });
-          setStatus(transcriptText
-            ? "Transcription completed. Please review it; automatic transcription may be inaccurate."
-            : "No speech could be transcribed. You may retry or continue without this task.");
-          onVoiceResult?.({
-            status: transcriptText ? "completed" : "empty",
-            duration: result.duration_seconds ?? null,
-            language: result.language || "unknown",
-            speech_features: data.speech_features || result.speech_features || null,
-            transcript_analysis: analysis,
-            provenance: result.provenance || null
-          });
-        } catch (error) {
-          setStatus(error.message || "Audio transcription failed.");
-          setTranscriptAnalysis(null);
-          setSpeechFeatures(null);
-          setClassifierResult({ status: "unavailable" });
-          onVoiceResult?.({ status: "unavailable", duration: null, language: "", speech_features: null, transcript_analysis: null, provenance: null });
-        } finally {
-          stream.getTracks().forEach((track) => track.stop());
-          streamRef.current = null;
-          setIsUploading(false);
-        }
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      setCountdown(20);
-      setRecordingSeconds(0);
-      startTimeRef.current = Date.now();
-      setIsRecording(true);
-      setStatus("Recording. Please describe the picture for up to 20 seconds.");
-    } catch (error) {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      setStatus(error.message || "Unable to start recording.");
-    }
-  };
-
-  useEffect(() => () => {
-    clearInterval(timerRef.current);
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-  }, []);
-
-  return (
-    <div className="task-box">
-      <p className="eyebrow">Voice assessment</p>
-      <h2>Describe the picture in your own words</h2>
-      <p>This optional research task displays the automatic transcript and literal descriptive observations. It does not assess picture details or produce a diagnosis.</p>
-      <div className="picture-stimulus" role="img" aria-label="A landscape illustration with a house, trees, path, flowers, and pond">
-        <svg viewBox="0 0 600 280" aria-hidden="true">
-          <rect width="600" height="280" fill="#d9efff" /><circle cx="500" cy="58" r="34" fill="#f5c45c" />
-          <rect y="175" width="600" height="105" fill="#8fcf9b" /><path d="M0 215 Q140 180 270 220 T600 205 V280 H0Z" fill="#68ad7f" />
-          <path d="M247 280 L325 179 L400 280" fill="#d9c39a" /><rect x="92" y="105" width="110" height="86" rx="4" fill="#fff3d4" />
-          <path d="M78 109 L147 57 L216 109Z" fill="#b85f57" /><rect x="133" y="143" width="30" height="48" fill="#74564b" />
-          <g fill="#397c55"><circle cx="55" cy="140" r="32" /><circle cx="258" cy="128" r="35" /><circle cx="430" cy="151" r="31" /></g>
-          <ellipse cx="502" cy="226" rx="59" ry="22" fill="#6dbad0" />
-        </svg>
-      </div>
-      <label className="consent-field">
-        <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
-        <span>I consent to microphone use and temporary transcription for this task.</span>
-      </label>
-      <div className="memory-timer-box">
-        {isRecording ? "Recording: " + Math.min(20, 20 - countdown) + "s / 20s" : "Recorded duration: " + recordingSeconds.toFixed(1) + "s"}
-      </div>
-      <div className="voice-recording-box">
-        <button className="primary-btn" type="button" onClick={isRecording ? stopRecording : startRecording} disabled={isUploading}>
-          {isRecording ? "Stop recording" : isUploading ? "Uploading and transcribing..." : "Start recording"}
+        <button
+          className="primary-btn"
+          onClick={() => onNext(formatLocalAssessmentDate(today), Number(((Date.now() - startedAtRef.current) / 1000).toFixed(2)))}
+        >
+          {t.next}
         </button>
-        <p role="status">{status}</p>
-        {isUploading && <div className="upload-progress" role="status"><progress max="100" value={uploadProgress} aria-label="Audio upload progress" /><span>{uploadProgress}% uploaded</span></div>}
-        {previewUrl && <div className="recording-preview"><label htmlFor="voice-playback">Local recording playback</label><audio id="voice-playback" controls src={previewUrl} /><small>The preview stays in this browser temporarily and is not saved to the assessment.</small></div>}
-        {detectedLanguage && <p>Detected language: {detectedLanguage}</p>}
-        {transcript
-          ? <div className="transcript-panel"><h3>Transcript</h3><p>{transcript}</p></div>
-          : transcriptAnalysis?.status === "empty" && <p>No transcript text was recognized.</p>}
-        {transcriptAnalysis && <TranscriptObservationList analysis={transcriptAnalysis} />}
-        <SpeechTimingObservations speechFeatures={speechFeatures} />
-        {classifierResult?.status === "available_research_only"
-          ? <p className="research-model-output" role="status">Separate experimental speech-model output: <strong>{classifierResult.prediction?.predicted_label || "unavailable"}</strong>. This is not produced by the transcript rules, is not a diagnosis or personal risk estimate, and class scores are uncalibrated.</p>
-          : <p role="status">Research analysis only — classifier unavailable. Transcript observations are not model predictions.</p>}
       </div>
-      <div className="task-actions"><button className="primary-btn" type="button" onClick={onFinish} disabled={isRecording || isUploading}>Continue</button></div>
     </div>
   );
 }
+
 
 function LanguageTask({ t, value, setValue, onFinish }) {
   const [typingCountdown, setTypingCountdown] = useState(30);
   const [sentenceVisible, setSentenceVisible] = useState(false);
   const [typingEnabled, setTypingEnabled] = useState(false);
   const finishedRef = useRef(false);
+  const startedAtRef = useRef(Date.now());
 
   useEffect(() => {
     const sentenceTimer = setTimeout(() => {
@@ -1132,7 +1067,7 @@ function LanguageTask({ t, value, setValue, onFinish }) {
           clearInterval(typingTimer);
           if (!finishedRef.current) {
             finishedRef.current = true;
-            onFinish?.();
+            onFinish?.(Number(((Date.now() - startedAtRef.current) / 1000).toFixed(2)));
           }
           return 0;
         }
@@ -1146,7 +1081,7 @@ function LanguageTask({ t, value, setValue, onFinish }) {
   const handleSubmit = async () => {
     if (finishedRef.current) return;
     finishedRef.current = true;
-    await onFinish?.();
+    await onFinish?.(Number(((Date.now() - startedAtRef.current) / 1000).toFixed(2)));
   };
 
   return (
@@ -1234,21 +1169,23 @@ function ResultSummary({ result, t }) {
           <p>{cognitiveTaskScore.limitation}</p>
         </section>
       )}
-      <section className="simulated-probability-card" aria-label="Simulated dementia probability">
-        <h3>Simulated Dementia Probability (Demo Only)</h3>
-        <p className="simulated-probability-value">
-          {simulatedProbability == null ? "Not available" : `${simulatedProbability.toFixed(2)}%`}
-        </p>
-        <p>
-          Illustrative score-to-percentage mapping for an educational demonstration.
-          Not a clinically validated probability or diagnosis.
-        </p>
-        {cognitiveTaskScore?.index_percent != null && (
-          <p className="muted-text">
-            Based only on cognitive task-performance score: {cognitiveTaskScore.index_percent}/100.
+      {isSimulatedDemo && (
+        <section className="simulated-probability-card" aria-label="Simulated dementia probability">
+          <h3>Simulated Dementia Probability (Demo Only)</h3>
+          <p className="simulated-probability-value">
+            {simulatedProbability == null ? "Not available" : `${simulatedProbability.toFixed(2)}%`}
           </p>
-        )}
-      </section>
+          <p>
+            Illustrative score-to-percentage mapping for an educational demonstration.
+            Not a clinically validated probability or diagnosis.
+          </p>
+          {cognitiveTaskScore?.index_percent != null && (
+            <p className="muted-text">
+              Based only on cognitive task-performance score: {cognitiveTaskScore.index_percent}/100.
+            </p>
+          )}
+        </section>
+      )}
       <div className="metric-grid">
         {Object.entries(taskNames).map(([key, title]) => (
           <div key={key} className="report-item"><span>{title}</span><strong>{taskResults[key]?.status || "not assessed"}</strong></div>
@@ -1291,6 +1228,7 @@ function ResultSummary({ result, t }) {
         <PredictionResult prediction={voicePrediction} label="Voice model" />
       </section>}
       {flags.length > 0 && <section className="report-section"><h3>Assessment notes</h3><ul className="flag-list">{flags.map((flag, index) => <li key={index}>{flag}</li>)}</ul></section>}
+      {result?.multimodalSummary && <MultimodalSummary summary={result.multimodalSummary} />}
     </div>
   );
 }

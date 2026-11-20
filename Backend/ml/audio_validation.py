@@ -42,6 +42,7 @@ def inspect_audio_file(
             square_sum = 0.0
             value_count = 0
             peak = 0.0
+            clipped_count = 0
             sample_rate = None
 
             for frame in container.decode(audio_streams[0]):
@@ -64,6 +65,7 @@ def inspect_audio_file(
 
                 square_sum += float(np.square(normalized).sum())
                 value_count += int(normalized.size)
+                clipped_count += int(np.sum(np.abs(normalized) >= 0.99))
                 peak = max(peak, float(np.max(np.abs(normalized))))
                 sample_count += int(frame.samples)
                 duration_seconds += float(frame.samples) / float(rate)
@@ -103,9 +105,18 @@ def inspect_audio_file(
             round(duration_seconds, 3),
         )
 
+    clipping_ratio = round(clipped_count / value_count, 6) if value_count else 0.0
+    quality_warnings: list[str] = []
+    if clipping_ratio > 0.01:
+        quality_warnings.append("clipping_detected")
+    if rms < 0.01:
+        quality_warnings.append("low_volume")
+
     return {
         "duration_seconds": round(duration_seconds, 3),
         "sample_rate_hz": sample_rate,
         "decoded_samples": sample_count,
         "rms_amplitude": round(rms, 7),
+        "clipping_ratio": clipping_ratio,
+        "quality_warnings": quality_warnings,
     }

@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+.env
+**/.env
+.venv
+.venv-audio
+__pycache__
+**/__pycache__
+*.pyc
+Frontend/dist
+research-data
+Frontend.zip

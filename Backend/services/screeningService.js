@@ -2,19 +2,31 @@
 import { pool } from "../config/db.js";
 import {
   calculateTappingMetrics,
+  evaluateDelayedMemory,
+  evaluateDigitSpan,
   evaluateOrientation,
+  evaluatePatternRecognition,
+  evaluatePictureRecognition,
   validateClinicianObservation,
+  validateClockDrawing,
   validatePatientProfile,
+  validatePhysicalExamination,
   validateVoiceResponse
 } from "./assessmentValidation.js";
 
 const allowedTasks = [
   "memory",
+  "delayed_memory",
   "attention",
+  "digit_span",
+  "picture_recognition",
+  "pattern_recognition",
+  "clock_drawing",
   "language",
   "orientation",
   "voice",
   "motor_tapping",
+  "physical_examination",
   "clinician_observation"
 ];
 
@@ -76,8 +88,32 @@ const calculateScore = (taskType, data = {}) => {
     return evaluateOrientation(data).score;
   }
 
+  if (taskType === "delayed_memory") {
+    return evaluateDelayedMemory(data).score;
+  }
+
+  if (taskType === "digit_span") {
+    return evaluateDigitSpan(data).score;
+  }
+
+  if (taskType === "picture_recognition") {
+    return evaluatePictureRecognition(data).score;
+  }
+
+  if (taskType === "pattern_recognition") {
+    return evaluatePatternRecognition(data).score;
+  }
+
+  if (taskType === "clock_drawing") {
+    return validateClockDrawing(data).score;
+  }
+
   if (taskType === "motor_tapping") {
     calculateTappingMetrics(data);
+  }
+
+  if (taskType === "physical_examination") {
+    validatePhysicalExamination(data);
   }
 
   if (taskType === "clinician_observation") {
@@ -90,7 +126,25 @@ const calculateScore = (taskType, data = {}) => {
 
 export const buildCognitiveTaskScore = (taskResults = {}) => {
   const supportedTasks = ["memory", "attention", "orientation"];
+  const extendedTasks = [
+    "memory",
+    "delayed_memory",
+    "attention",
+    "orientation",
+    "digit_span",
+    "picture_recognition",
+    "pattern_recognition",
+    "clock_drawing"
+  ];
   const measured = supportedTasks
+    .map((task) => {
+      const score = taskResults[task]?.score;
+      return typeof score === "number" && Number.isFinite(score) && score >= 0 && score <= 100
+        ? { task, score }
+        : null;
+    })
+    .filter(Boolean);
+  const measuredExtended = extendedTasks
     .map((task) => {
       const score = taskResults[task]?.score;
       return typeof score === "number" && Number.isFinite(score) && score >= 0 && score <= 100
@@ -110,6 +164,10 @@ export const buildCognitiveTaskScore = (taskResults = {}) => {
     index_percent: measured.length
       ? Number((measured.reduce((sum, entry) => sum + entry.score, 0) / measured.length).toFixed(2))
       : null,
+    extended_index_percent: measuredExtended.length
+      ? Number((measuredExtended.reduce((sum, entry) => sum + entry.score, 0) / measuredExtended.length).toFixed(2))
+      : null,
+    extended_included_tasks: measuredExtended.map(({ task }) => task),
     included_tasks: measured.map(({ task }) => task),
     not_measured_tasks: missing,
     method: "Unweighted arithmetic mean of the available memory, attention, and orientation task percentages. Language is not included because the current task has no validated numeric scoring rule.",
@@ -269,8 +327,32 @@ export const saveTaskResponse = async (
       ...responseData,
       orientationMetrics: evaluateOrientation(responseData)
     };
+  } else if (taskType === "delayed_memory") {
+    storedResponseData = {
+      ...responseData,
+      delayedMemoryMetrics: evaluateDelayedMemory(responseData)
+    };
+  } else if (taskType === "digit_span") {
+    storedResponseData = {
+      ...responseData,
+      digitSpanMetrics: evaluateDigitSpan(responseData)
+    };
+  } else if (taskType === "picture_recognition") {
+    storedResponseData = {
+      ...responseData,
+      pictureRecognitionMetrics: evaluatePictureRecognition(responseData)
+    };
+  } else if (taskType === "pattern_recognition") {
+    storedResponseData = {
+      ...responseData,
+      patternRecognitionMetrics: evaluatePatternRecognition(responseData)
+    };
+  } else if (taskType === "clock_drawing") {
+    storedResponseData = validateClockDrawing(responseData);
   } else if (taskType === "motor_tapping") {
     storedResponseData = calculateTappingMetrics(responseData);
+  } else if (taskType === "physical_examination") {
+    storedResponseData = validatePhysicalExamination(responseData);
   } else if (taskType === "clinician_observation") {
     storedResponseData = validateClinicianObservation(responseData);
   }
@@ -402,6 +484,7 @@ export const getScreeningSummary = async (screeningId, userId) => {
     completedTasks: [...completedTasks],
     optionalTasks: {
       voice: taskResults.voice?.measurements?.status || taskResults.voice?.status || "not_assessed",
+      physical_examination: taskResults.physical_examination?.status || "not_assessed",
       motor_tapping: taskResults.motor_tapping?.status || "not_assessed",
       clinician_observation: taskResults.clinician_observation?.status || "not_assessed"
     },
