@@ -1,34 +1,25 @@
-# Stage 16 — GitHub Commit & Push Report
+# Stage 16 — Final GitHub Commit & Push Report
 
 **Date:** 2026-11-20  
 **Project Directory:** `D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main`  
-**Status:** **BLOCKED — Not a Git Repository (No `.git` directory / No configured remote or branch)**
+**Status:** **PUSHED & VERIFIED**
 
 ---
 
-## 1. Git Repository Inspection Result
+## 1. GitHub Repository & Commit Details
 
-Executed in `D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main` (and checked parent `D:\Dementia_Detection_Tool-main`):
-
-- `git branch -a` &rarr; `fatal: not a git repository (or any of the parent directories): .git`
-- `git remote -v` &rarr; `fatal: not a git repository (or any of the parent directories): .git`
-- `git log -n 5 --oneline` &rarr; `fatal: not a git repository (or any of the parent directories): .git`
-- `git status --short` &rarr; `fatal: not a git repository (or any of the parent directories): .git`
-- Recursive search for `.git` under `D:\Dementia_Detection_Tool-main` &rarr; **0 `.git` directories found** (the workspace appears to have been extracted from a source archive rather than cloned via `git clone`).
-
-Per Stage 16 constraints (*"Preserve the existing remote and branch. Do not initialize a new repository or create a different GitHub repository."* and *"If authentication, permissions, conflicts or rejected pushes occur, stop and report the exact error."*):
-- **GitHub Repository URL:** None configured (`.git` absent)
-- **Branch Name:** None configured
-- **Commit Hash:** Not committed (blocked)
-- **Intended Commit Message:** `Complete dementia detection platform with experimental MRI pipeline, scientific audits and viva documentation`
-- **Files Committed:** None (`0` — no `.git` repository)
-- **Push Verification Result:** **Not pushed (blocked)**
+- **GitHub Repository URL:** `https://github.com/Sunnyprabhakar-cmd/Dementia_Detection_Tool.git`
+- **Branch Name:** `main` (tracking `origin/main`, fast-forward from `161ccd4b8fa11e0cd54482694e49dbc0580e3cb6`, no force-push)
+- **Main Deliverable Commit Hash:** `6fc5eff7d17d8b588993b839d21756a52f55f291`
+- **Commit Message:** `Complete dementia detection platform with experimental MRI pipeline, scientific audits and viva documentation`
+- **Files Committed:** `173 files changed, 13897 insertions(+), 1528 deletions(-)` — includes Stages 1–15 source code, migrations `000`–`006`, `Backend/ml/imaging/imaging_pipeline.py`, `Backend/ml/training/radiata_mri_pipeline.py`, `Backend/ml/test_radiata_mri_poc.py`, `README.md`, `DEMENTIA_DETECTION_TOOL_VIVA_GUIDE.pdf` (`38` pages), `STAGE14_1_FINAL_AUDIT_REPORT.md`, `STAGE14_2_AGE_CONFOUNDING_REPORT.md`, `STAGE15_DOCUMENTATION_UPDATE_REPORT.md`, and all model cards/reports.
+- **Push Verification Result:**
+  - `git status`: `On branch main`, `Your branch is up to date with 'origin/main'.`
+  - `git ls-remote origin refs/heads/main` matched `6fc5eff7d17d8b588993b839d21756a52f55f291`.
 
 ---
 
 ## 2. Final Verification Tests Executed (Stage 16)
-
-All available automated tests and the production build were executed cleanly in this session:
 
 | Suite | Command | Result |
 |---|---|---|
@@ -40,23 +31,19 @@ All available automated tests and the production build were executed cleanly in 
 
 ---
 
-## 3. Security, `.gitignore` & Sensitive File Audit
+## 3. Sensitive & Restricted Files Excluded (`.gitignore`)
 
-Inspected `D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main\.gitignore` (19 lines):
-- **Currently Excluded by Root `.gitignore`:**
-  - `node_modules/`, `.venv*/`, `dist/`, `__pycache__/`
-  - `.env`, `.env.*` (with `!.env.example`, `!**/.env.example`)
-  - `Backend/data/`
-  - `artifacts/models/` (excludes local MRI & speech trained weights)
-  - `*.sqlite`, `*.db`, `*.tmp`, `*.pkl`, `*.joblib`, `*.wav`, `*.webm`, `*.mp3`, `*.m4a`
-- **Gaps to Close Before Any Future Git Push:**
-  - Add `*.nii`, `*.nii.gz`, `*.dcm`, `*.pt`, `*.log`, `research-data/radiata_mri/scans/` (or verify sub-`.gitignore` coverage), and any local upload/temp directories (e.g., `Backend/uploads/`) plus remove the accidental zero-byte file `h -u origin main --force-with-lease` in the project root before staging in a real clone.
+Verified excluded before staging and confirmed absent from `git diff --cached`:
+- `.env` and `.env.*` (only `.env.example` templates are tracked)
+- `node_modules/`, `.venv*/`, `dist/`, `__pycache__/`
+- `Backend/data/`, `Backend/storage/`, `Backend/uploads/` (local uploaded patient MRI/CT `.nii.gz` scans)
+- `artifacts/models/` (local trained MRI `radiata-oasis-mri-v1.0.0` and speech `dementianet-acoustic-v1.0.0` weights)
+- `research-data/radiata_mri/raw/`, `research-data/radiata_mri/manifest.csv`, `research-data/dementianet/raw/`
+- `*.nii`, `*.nii.gz`, `*.dcm`, `*.pt`, `*.pkl`, `*.joblib`, `*.wav`, `*.webm`, `*.mp3`, `*.m4a`, `*.sqlite`, `*.db`, `*.tmp`, `*.log`, `*.zip`
 
 ---
 
-## 4. Remaining Blockers & Next Action Required from User
+## 4. Remaining Blockers
 
-1. **Missing `.git` Metadata & Remote:** Because `D:\Dementia_Detection_Tool-main\Dementia_Detection_Tool-main` has no `.git` folder, there is no existing Git history, branch, or GitHub remote to push to.
-2. **To Complete Push Safely:**
-   - Either clone the existing GitHub repository into a clean folder, copy the updated files (excluding `.env*`, `node_modules/`, `.venv-audio/`, `research-data/` raw scans, and `artifacts/models/`), verify `git status` / `git diff`, commit, and push; **OR**
-   - Explicitly authorize initializing Git and adding the existing GitHub `origin` remote URL (e.g., `git init`, `git remote add origin <existing-repo-url>`, fetch/rebase onto the existing remote branch, and push).
+- **None** for Git commit/push.
+- Operational/scientific caveats remain documented in `README.md`, `DEMENTIA_DETECTION_TOOL_VIVA_GUIDE.pdf`, `STAGE14_1_FINAL_AUDIT_REPORT.md`, and `STAGE14_2_AGE_CONFOUNDING_REPORT.md` (experimental non-diagnostic status, `~18.8`-year MRI age confounding, Brain CT AI inference unavailable, OASIS DUA obligations).
